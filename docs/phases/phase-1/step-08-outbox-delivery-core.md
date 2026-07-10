@@ -10,7 +10,7 @@
 
 ## 구현 범위
 
-- `PENDING`과 `attempt_count < 11`인 lease 만료 `PROCESSING` 후보를 `FOR UPDATE SKIP LOCKED`로 선점한다.
+- `status = PENDING AND attempt_count < 11 AND next_attempt_at <= now` 또는 `status = PROCESSING AND attempt_count < 11 AND locked_until < now`인 후보만 `FOR UPDATE SKIP LOCKED`로 선점한다.
 - 짧은 트랜잭션에서 `PROCESSING`, 증가한 `attempt_count`, 새 `claim_token`, `locked_by`, `locked_until`을 저장하고 commit한다.
 - `attempt_count = 11`인 lease 만료 `PROCESSING` 행은 12회째 선점하거나 외부 호출하지 않고 짧은 트랜잭션에서 `FAILED`로 전이하며 claim·lease를 정리한다.
 - 결과 갱신은 `event_id + PROCESSING + claim_token` 조건부 update로 수행한다.
@@ -31,6 +31,8 @@
 
 - 여러 작업자가 같은 후보를 동시에 선점해도 한 claim만 성공한다.
 - 여러 후보는 `SKIP LOCKED`로 서로 다른 작업자에게 분배될 수 있다.
+- `PENDING` 행은 `next_attempt_at = now`부터 선점되고 `next_attempt_at > now`이면 선점되지 않으며, 경계 전에는 `attempt_count`와 발행 port 호출 수가 변하지 않는다.
+- lease 만료 `PROCESSING` 행은 `locked_until < now`일 때만 회수되고 `locked_until = now`에서는 회수되지 않는다.
 - `attempt_count < 11`인 lease 만료 `PROCESSING` 행은 횟수를 증가시키고 새 token으로 회수된다.
 - `attempt_count = 11`인 작업자가 선점 commit 후 종료하면 lease 만료 뒤 외부 발행 port를 호출하지 않고 `FAILED`가 되며 count는 11, claim·lock 필드는 `NULL`로 남는다.
 - 이전 token의 늦은 성공·실패 결과는 새 상태를 덮어쓰지 못한다.

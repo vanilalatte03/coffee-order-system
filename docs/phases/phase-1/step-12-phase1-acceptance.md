@@ -6,7 +6,7 @@
 
 ## 목표
 
-새 기능을 추가하기보다 Phase 1 전체 보장을 실제 MySQL·HTTP stub·다중 thread 환경에서 증명하고, 문서를 구현 상태에 맞춰 최종 완료한다.
+새 기능을 추가하기보다 Phase 1 전체 보장을 실제 MySQL·HTTP stub·다중 thread와 독립 애플리케이션 context 환경에서 증명하고, 문서를 구현 상태에 맞춰 최종 완료한다.
 
 ## 구현 범위
 
@@ -22,8 +22,8 @@
 
 추가로 다음 Step 12 전용 보장을 검증한다.
 
-- 같은 주문 요청을 같은 키로 동시에 보내도 주문·`PAYMENT` 원장·Outbox 효과가 각각 한 건이다.
-- 서로 다른 키의 충전과 주문이 같은 지갑에서 경쟁해도 최종 잔액과 원장 합계가 일치한다.
+- 같은 MySQL Testcontainer를 공유하는 독립 ApplicationContext 두 개에서 같은 주문 요청을 같은 키로 동시에 보내도 주문·`PAYMENT` 원장·Outbox 효과가 각각 한 건이고, 각 응답은 최초 결과 또는 그 재생이다.
+- 같은 MySQL Testcontainer를 공유하는 독립 ApplicationContext 두 개에서 서로 다른 키의 충전과 주문이 같은 지갑에서 경쟁해도 최종 잔액과 원장 합계가 일치한다.
 - 비활성 메뉴 주문을 같은 키로 재전송하면 최초 상태와 안정적인 오류 payload를 재생하고 `timestamp`·`traceId`는 현재 요청 값으로 만든다.
 - DB lock timeout 또는 일시적 DB 오류 뒤 같은 키로 재시도해도 중복 효과가 없다.
 
