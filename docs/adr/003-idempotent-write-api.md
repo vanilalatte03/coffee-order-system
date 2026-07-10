@@ -1,6 +1,7 @@
 # ADR-003: 충전과 주문 API에 DB 기반 멱등성 적용
 
-- 상태: 채택됨
+- 상태: 대체됨
+- 대체 ADR: [ADR-008](./008-idempotent-error-response-metadata.md)
 - 날짜: 2026-07-10
 - 관련: [`PRD` 멱등성](../PRD.md#63-멱등성), [`ARCHITECTURE` 멱등 처리](../ARCHITECTURE.md#53-멱등성-처리), [`API` 공통 규칙](../API.md#02-쓰기-요청-멱등성), [`ERD` 멱등 요청](../ERD.md#36-idempotency_requests)
 
