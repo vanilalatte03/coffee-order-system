@@ -9,7 +9,7 @@
 
 - MySQL을 사용자, 메뉴, 포인트, 주문, 멱등성, Outbox의 정본으로 사용한다.
 - 포인트와 가격은 소수점 없는 signed `BIGINT`로 저장한다.
-- 모든 시각은 UTC `DATETIME(6)`으로 저장하고 JDBC 세션 타임존도 UTC로 고정한다.
+- 모든 시각은 UTC `DATETIME(6)`으로 저장하고 JDBC 세션 타임존도 UTC로 고정한다. 애플리케이션은 DB에 저장하거나 조건으로 비교할 `Instant`를 먼저 마이크로초 정밀도로 정규화한다.
 - 주문에는 결제 시점의 메뉴 이름, 단가, 결제 금액을 스냅샷으로 보존한다.
 - 포인트 지갑은 현재 잔액을, 포인트 원장은 변경 이력을 담당한다.
 - 원장은 수정하지 않는 append-only 데이터다.
@@ -212,7 +212,7 @@ erDiagram
 | `request_hash` | `CHAR(64)` | N | 정규화 요청의 SHA-256 hex |
 | `status` | `VARCHAR(20)` | N | 트랜잭션 내부 `PROCESSING`, 커밋 시 `COMPLETED` |
 | `response_status` | `SMALLINT` | Y | 최초 완료 HTTP 상태 |
-| `response_body` | `JSON` | Y | 최초 완료 응답 스냅샷 |
+| `response_body` | `JSON` | Y | 재생할 안정 응답 payload. 성공은 최초 body 전체를, 결정적 오류는 `code`·`message`·`fieldErrors`만 저장 |
 | `created_at` | `DATETIME(6)` | N | 처리 시작 시각 UTC |
 | `completed_at` | `DATETIME(6)` | Y | 최초 멱등 응답 확정 시각 UTC |
 
@@ -222,7 +222,7 @@ erDiagram
 - `CHECK (operation IN ('POINT_CHARGE', 'ORDER_CREATE'))`
 - `CHECK (status IN ('PROCESSING', 'COMPLETED'))`
 
-`PROCESSING` 행은 사용자 존재 확인 뒤 도메인 처리 트랜잭션 안에서 생성되므로 다른 트랜잭션에는 커밋 전까지 보이지 않는다. `201` 성공과 결정적 비즈니스 실패는 `COMPLETED`와 응답 스냅샷을 커밋한다. 구조 검증 실패, 사용자 없음, DB·락·서버의 일시적 실패는 행을 만들지 않거나 롤백한다. V1에서는 자동 만료·삭제하지 않는다.
+`PROCESSING` 행은 사용자 존재 확인 뒤 도메인 처리 트랜잭션 안에서 생성되므로 다른 트랜잭션에는 커밋 전까지 보이지 않는다. 성공 응답은 최초 body 전체를 저장해 그대로 재생한다. 결정적 오류는 안정 필드인 `code`, `message`, `fieldErrors`만 저장하고 요청 시각의 `timestamp`와 현재 요청의 `traceId`는 최초 응답과 재생 응답마다 조립한다. 어떤 응답을 `COMPLETED`로 저장하고 어떤 실패를 저장하지 않는지, 보존 기간 계약은 [API 공통 규칙](./API.md#02-쓰기-요청-멱등성)을 따른다.
 
 ### 3.7 `outbox_events`
 
@@ -255,7 +255,7 @@ erDiagram
 - `CHECK (aggregate_type = 'ORDER' AND event_type = 'ORDER_PAID')` — V1 이벤트 계약
 - `CHECK (attempt_count BETWEEN 0 AND 11)` — 최초 1회와 최대 10회 재시도
 
-작업자는 짧은 트랜잭션에서 이벤트를 `PROCESSING`으로 바꾸고 새 `claim_token`과 lease를 남긴 뒤 외부 호출은 트랜잭션 밖에서 수행한다. `locked_until`이 지난 `PROCESSING` 행은 새 token으로 회수할 수 있다. 결과 UPDATE는 `event_id`, `status = PROCESSING`, 현재 `claim_token`이 모두 일치할 때만 허용하여 lease를 잃은 작업자의 늦은 결과가 새 상태를 덮어쓰지 못하게 한다.
+작업자는 짧은 트랜잭션에서 이벤트를 `PROCESSING`으로 바꾸고 새 `claim_token`과 lease를 남긴 뒤 외부 호출은 트랜잭션 밖에서 수행한다. `locked_until`이 지난 `PROCESSING` 행은 `attempt_count < 11`일 때만 횟수를 증가시키고 새 token으로 회수한다. `attempt_count = 11`인 작업자가 선점 커밋 후 종료했다면 lease 만료 시 횟수를 12로 만들지 않고, 외부 호출도 하지 않은 채 짧은 트랜잭션에서 `FAILED`로 전이하고 `claim_token`, `locked_by`, `locked_until`을 비운다. 결과 UPDATE는 `event_id`, `status = PROCESSING`, 현재 `claim_token`이 모두 일치할 때만 허용하여 lease를 잃은 작업자의 늦은 결과가 새 상태를 덮어쓰지 못하게 한다.
 
 ## 4. 상태 전이
 
@@ -268,11 +268,12 @@ stateDiagram-v2
     PROCESSING --> PUBLISHED: 외부 수신 성공
     PROCESSING --> PENDING: 재시도 가능한 실패
     PROCESSING --> FAILED: 영구 오류 또는 시도 한도 초과
-    PROCESSING --> PENDING: lease 만료 후 회수
+    PROCESSING --> PROCESSING: lease 만료·attempt_count < 11 재선점
+    PROCESSING --> FAILED: lease 만료·attempt_count = 11, 외부 호출 없음
     FAILED --> PENDING: 운영자 수동 재처리
 ```
 
-`attempt_count`는 작업자가 이벤트를 `PROCESSING`으로 선점할 때 증가한다. 값 `1`이 최초 dispatch이고 `2~11`이 최대 10회의 재선점이다. 선점 커밋 후 실제 외부 호출 전에 작업자가 종료되면 횟수 한 회가 소비될 수 있으나, lease 만료 후 다음 주기로 복구하고 최종 격리된 이벤트는 수동 재처리한다. 따라서 정상 경로의 실제 외부 호출은 최대 11회이며 이보다 많아지지 않는다.
+`attempt_count`는 작업자가 이벤트를 `PROCESSING`으로 선점할 때 증가한다. 값 `1`이 최초 dispatch이고 `2~11`이 최대 10회의 재선점이다. 선점 커밋 후 실제 외부 호출 전에 작업자가 종료되면 횟수 한 회가 소비될 수 있다. 이때 횟수가 11 미만이면 lease 만료 후 다음 선점으로 복구하고, 이미 11이면 추가 선점과 외부 호출 없이 `FAILED`로 격리한다. 따라서 `attempt_count`는 11을 넘지 않고 정상 경로의 실제 외부 호출도 최대 11회다.
 
 `FAILED` 이벤트를 수동 재처리할 때는 원인을 기록한 뒤 하나의 트랜잭션에서 `attempt_count = 0`, `next_attempt_at = 현재 UTC`, `claim_token = NULL`, `locked_by = NULL`, `locked_until = NULL`, `status = PENDING`으로 초기화한다. 기존 실패 이력은 구조화 로그와 감사 기록으로 보존한다.
 
@@ -292,7 +293,7 @@ stateDiagram-v2
 | 포인트 충전 | `point_wallets` 사용자 행 `FOR UPDATE` | 지갑 증가, `CHARGE` 원장, 성공 멱등 응답 | 모두 롤백 |
 | 주문·결제 | `point_wallets` 사용자 행 `FOR UPDATE` | 지갑 감소, `PAID` 주문, `PAYMENT` 원장, Outbox, 성공 멱등 응답 | 모두 롤백 |
 | 결정적 비즈니스 실패 | 필요한 경우 사용자 지갑 행 | 완료 오류 멱등 응답만 저장, 도메인 쓰기 없음 | 응답 저장 실패 시 멱등 행도 롤백 |
-| Outbox 선점 | 후보 Outbox 행 `FOR UPDATE SKIP LOCKED` | `PROCESSING`, lease, dispatch 선점 횟수 | 선점 롤백, 다른 작업자가 처리 가능 |
+| Outbox 선점·만료 복구 | 후보 Outbox 행 `FOR UPDATE SKIP LOCKED` | 한도 미만이면 `PROCESSING`, lease, dispatch 선점 횟수. 11회째 만료면 외부 호출 없이 `FAILED`와 claim·lease 정리 | 선점·격리 롤백, 다른 작업자가 다시 판단 가능 |
 | Outbox 결과 | event ID + claim token 대상 행 | `PUBLISHED`, `PENDING` 또는 `FAILED` | stale token이면 갱신하지 않고 lease 만료 후 복구 |
 
 ## 6. 삭제와 보존
@@ -313,3 +314,4 @@ MySQL 8의 `CHECK` 제약이 실제로 적용되는 버전을 고정하고, Test
 - 주문별 결제 원장과 주문별 Outbox 이벤트가 중복 생성되지 않는가?
 - 멱등성 복합 유니크 제약이 다중 트랜잭션 경쟁에서도 한 건만 허용하는가?
 - 인기 집계와 Outbox polling 쿼리가 예상 인덱스를 사용하는가?
+- `attempt_count = 11`인 만료 `PROCESSING` 행이 12회째 선점이나 외부 호출 없이 `FAILED`로 격리되는가?

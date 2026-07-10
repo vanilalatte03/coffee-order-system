@@ -26,9 +26,10 @@
 - 전달 의미: 중복 가능한 durable at-least-once 처리
 - 중복 제거 키: UUID `eventId`
 - 재시도: 한 자동 처리 주기에서 최초 dispatch 1회 이후 지수 백오프로 최대 10회 재선점, 정상 경로의 외부 호출 최대 11회
+- 한도 도달 crash 복구: `attempt_count = 11`인 `PROCESSING` 작업자가 선점 커밋 후 종료하면 lease 만료 뒤 12회째 선점이나 외부 호출 없이 짧은 트랜잭션에서 `FAILED`로 전이하고 claim token과 lease를 정리
 - 최종 실패: `FAILED` 격리 후 시도 횟수·claim token·lease를 초기화하는 새 주기의 수동 재처리
 
-네트워크 호출 동안 DB 락을 잡지 않는다. 작업자는 먼저 상태와 lease를 커밋하고 호출하며, lease 만료 시 다른 작업자가 회수한다.
+네트워크 호출 동안 DB 락을 잡지 않는다. 작업자는 먼저 상태와 lease를 커밋하고 호출하며, lease 만료 시 한도가 남은 행만 횟수를 증가시켜 회수한다. 이미 `attempt_count = 11`이면 DB CHECK를 넘는 12회째 선점을 시도하지 않고 외부 호출 없이 `FAILED`로 격리한다.
 
 ## 결과
 
