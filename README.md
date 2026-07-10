@@ -9,23 +9,11 @@
 - JDK 21
 - IntelliJ IDEA
 - Git
+- Docker Desktop 또는 Testcontainers와 호환되는 Docker runtime
 
 Gradle 8.14.5 Wrapper를 저장소에 포함하므로 Gradle은 별도로 설치하지 않아도 됩니다.
 
-### 코드 포맷과 Git hook
-
-저장소를 clone하거나 Git 저장소로 초기화한 뒤, clone마다 한 번 아래 명령으로 공유 hook을 활성화합니다.
-
-```powershell
-.\scripts\install-git-hooks.ps1
-```
-
-pre-commit hook은 staged 파일의 공백 오류와 전체 코드 포맷을 검사하며 파일을 자동으로 바꾸지는 않습니다. 포맷 검사가 실패하면 다음 명령으로 수정한 뒤 변경 내용을 다시 확인하고 stage합니다.
-
-```powershell
-.\gradlew.bat spotlessApply
-.\gradlew.bat spotlessCheck
-```
+Docker daemon 가동 여부 확인, Git hook 설정, 코드 포맷, Windows PowerShell과 POSIX 셸 실행 및 검증 방법은 [Commands](./docs/COMMANDS.md)를 참고합니다.
 
 ### IntelliJ에서 실행
 
@@ -34,26 +22,6 @@ pre-commit hook은 staged 파일의 공백 오류와 전체 코드 포맷을 검
 3. Project SDK와 Gradle JVM이 JDK 21인지 확인합니다.
 4. `CoffeeOrderSystemApplication`의 `main` 메서드를 실행합니다.
 5. 브라우저에서 [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)를 열어 `{"status":"UP"}`을 확인합니다.
-
-### PowerShell에서 실행
-
-```powershell
-.\gradlew.bat bootRun
-```
-
-다른 PowerShell 창에서 상태를 확인할 수 있습니다.
-
-```powershell
-Invoke-RestMethod http://localhost:8080/actuator/health
-```
-
-포맷 검사, 테스트와 전체 빌드는 다음 명령으로 실행합니다.
-
-```powershell
-.\gradlew.bat spotlessCheck
-.\gradlew.bat test
-.\gradlew.bat clean build
-```
 
 현재 초기 설정은 외부 DB 없이 기동됩니다. JPA, MySQL, Flyway는 다음 구현 단계에서 함께 연결합니다.
 
@@ -98,7 +66,9 @@ H2 대신 MySQL Testcontainers로 비관적 락, 유니크 제약, 트랜잭션 
 | --- | --- |
 | [PRD](./docs/PRD.md) | 제품 목표, 범위, 비즈니스 규칙, 수용 기준 |
 | [Architecture](./docs/ARCHITECTURE.md) | 시스템 구조, 트랜잭션, 동시성, 장애와 테스트 전략 |
+| [Phase 계획](./docs/phases/README.md) | 정본 계약을 Phase와 PR step 단위로 나눈 실행 계획 |
 | [Conventions](./docs/CONVENTIONS.md) | 패키지 의존 방향, 계층별 책임, 구현·테스트 규칙 |
+| [Commands](./docs/COMMANDS.md) | Git hook, 포맷, 실행, 테스트와 전체 검증 명령 |
 | [ERD](./docs/ERD.md) | 테이블, 관계, 제약, 인덱스와 상태 전이 |
 | [API](./docs/API.md) | HTTP·이벤트 요청/응답과 오류 계약 |
 | [ADR](./docs/adr/README.md) | 대안과 기술적 선택 이유 |
