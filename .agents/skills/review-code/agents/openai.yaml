@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Code"
+  short_description: "차원별 read-only 코드 리뷰"
+  default_prompt: "Use $review-code to review the current branch changes."
