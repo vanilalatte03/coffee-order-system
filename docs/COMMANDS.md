@@ -140,6 +140,16 @@ POSIX 셸(Linux, macOS, WSL):
 
 DB 락·제약·트랜잭션 동작을 검증하는 테스트가 추가되면 H2로 대체하지 않고 MySQL Testcontainers로 실행한다.
 
+## CI
+
+GitHub Actions의 [CI workflow](../.github/workflows/ci.yml)는 `develop`·`main` 대상 pull request, 두 branch의 push와 수동 실행에서 `verify` job을 수행한다.
+
+- JDK 21과 저장소의 Gradle Wrapper를 사용한다.
+- pull request에서는 변경 범위의 공백 오류를 검사한다.
+- `clean build`로 포맷, 테스트, 컴파일과 패키징을 검증한다.
+- 실패한 테스트 리포트는 7일 동안 workflow artifact로 보존한다.
+- 문서도 Spotless 검사 대상이므로 문서만 변경한 pull request도 CI를 생략하지 않는다.
+
 ## 명령 관리 원칙
 
 - 현재 `build.gradle`과 저장소에 실제로 존재하는 task와 스크립트만 사용한다.
