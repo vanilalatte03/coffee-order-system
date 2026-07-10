@@ -10,8 +10,8 @@
 
 ## 구현 범위
 
-- 주문 Request/Response DTO, Command/Result와 Controller를 구현한다.
-- `OrderFacade`는 자체를 외부 `@Transactional`로 감싸지 않고 사용자 확인, 멱등 실행과 원자적 업무 callback을 조정한다. `IdempotencyExecutor`가 별도 proxied runner 또는 `TransactionTemplate`로 물리 write transaction을 실행·commit하고 유니크 충돌 후 새 read transaction 재조회를 담당한다.
+- 주문 Request/Response DTO, Command/Result와 Controller를 구현하고, 주문 Command의 path와 body를 canonical payload로 정규화해 Step 04의 공통 hasher로 `request_hash`를 만든다.
+- `OrderFacade`는 자체를 외부 `@Transactional`로 감싸지 않고 멱등 실행, 사용자 확인 사전 검증과 원자적 업무 callback을 조정한다. `IdempotencyExecutor`가 사전 검증 뒤 별도 proxied runner 또는 `TransactionTemplate`로 물리 write transaction을 실행·commit하고 유니크 충돌 후 새 read transaction 재조회를 담당한다.
 - callback 안의 정본 순서는 `메뉴 검증 → 지갑 락·잔액 검증 → PAID 주문 저장·ID 확보 → 지갑 차감·PAYMENT(orderId) 원장 → Outbox → 멱등 완료 snapshot → commit`으로 고정한다.
 - Facade는 각 기능 Service만 조합하고 Repository를 직접 참조하지 않는다.
 - 충분한 잔액이면 `201`과 주문 snapshot, 남은 잔액을 반환한다.

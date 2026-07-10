@@ -12,10 +12,10 @@
 
 - `IdempotencyRequest`, operation/status enum, Repository와 응답 snapshot 모델을 구현한다.
 - 범위 `(userId, operation, idempotencyKey)`와 키 형식 `^[A-Za-z0-9._:-]{1,128}$`을 적용한다.
-- 충전과 주문 Command를 안정적으로 정규화하고 SHA-256 hash를 만드는 기능을 구현한다.
+- 업무 Step이 만든 canonical payload를 입력받아 SHA-256 hash를 만드는 공통 기능과 정규화 payload 계약을 구현한다. 충전·주문 Command별 정규화는 각각 Step 05와 Step 07에서 연결한다.
 - 완료 기록이 있으면 같은 hash의 성공은 저장된 status/body를 그대로 재생하고, 결정적 오류는 저장된 status와 안정적인 오류 payload에 현재 요청의 `timestamp`·`traceId`를 조립한다. 다른 hash는 키 재사용 충돌로 분류한다.
 - 기록이 없으면 업무 트랜잭션 안에서 `PROCESSING`을 선점하고 성공 또는 결정적 실패를 `COMPLETED`로 저장한다.
-- 호출 Service나 Facade 자체를 외부 `@Transactional`로 감싸지 않고, `IdempotencyExecutor`가 별도 proxied runner 또는 `TransactionTemplate`로 `PROCESSING`, 업무 callback과 `COMPLETED` snapshot flush를 포함한 물리 write transaction을 실행·commit한다.
+- 호출 Service나 Facade 자체를 외부 `@Transactional`로 감싸지 않는다. `IdempotencyExecutor`는 저장하지 않는 사전 검증 callback을 write transaction 밖에서 실행하고, 별도 proxied runner 또는 `TransactionTemplate`로 `PROCESSING`, 업무 callback과 `COMPLETED` snapshot flush를 포함한 물리 write transaction을 실행·commit한다.
 - commit 또는 flush의 유니크 충돌은 write transaction이 종료된 뒤 포착하고, rollback-only 상태 밖의 새 read transaction에서 승자 결과를 재조회한다. callback의 하위 Service는 기본 `REQUIRED`로 같은 write transaction에 참여한다.
 - 일시적 인프라 실패와 저장 대상인 결정적 비즈니스 실패를 구분하는 결과 모델을 만든다.
 - 결정적 오류 snapshot에는 안정적인 비즈니스 payload만 저장하고 요청별 `traceId`와 오류 발생 시각은 포함하지 않는다.
@@ -50,6 +50,7 @@
 ## 제외 범위
 
 - 충전·주문 Controller 연결
+- 충전·주문 Command와 업무별 정규화 규칙
 - 업무별 오류 HTTP 응답
 - 멱등 기록 정리 배치
 - Redis 기반 멱등성

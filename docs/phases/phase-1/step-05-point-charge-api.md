@@ -12,7 +12,8 @@
 
 - 충전 Request/Response DTO, Command/Result, Controller와 유스케이스 Service를 구현한다.
 - path, body, `Idempotency-Key`의 구조 검증과 API 오류 매핑을 구현한다.
-- 충전 유스케이스 Service 자체를 외부 `@Transactional`로 감싸지 않고, 사용자 확인 뒤 `IdempotencyExecutor`에 지갑 락, 잔액 증가, `CHARGE` 원장과 완료 응답 snapshot callback을 위임한다. Executor가 물리 write transaction을 실행·commit한다.
+- 충전 Command의 path와 body를 canonical payload로 정규화하고 Step 04의 공통 hasher로 `request_hash`를 만든다.
+- 충전 유스케이스 Service 자체를 외부 `@Transactional`로 감싸지 않고, `IdempotencyExecutor`에 사용자 확인 사전 검증과 지갑 락, 잔액 증가, `CHARGE` 원장, 완료 응답 snapshot 업무 callback을 위임한다. Executor는 사전 검증 뒤 물리 write transaction을 실행·commit한다.
 - 최초 응답은 `201`과 `Idempotency-Replayed: false`, 재생 응답은 저장한 body와 `true`를 반환한다.
 - `POINT_BALANCE_OVERFLOW`는 도메인 변경 없이 안정적인 비즈니스 오류 payload만 멱등 결과로 저장하고 요청별 `traceId`와 오류 발생 시각은 snapshot에 포함하지 않는다.
 - DB 락 대기 timeout을 `503 CONCURRENCY_TIMEOUT`과 가능한 경우 `Retry-After: 1`로 변환한다.
