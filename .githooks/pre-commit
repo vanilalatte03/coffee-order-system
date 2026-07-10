@@ -10,14 +10,18 @@ if ! git diff --cached --check; then
     exit 1
 fi
 
-case "$(uname -s)" in
-    CYGWIN* | MINGW* | MSYS*) gradle_command='./gradlew.bat' ;;
-    *) gradle_command='./gradlew' ;;
-esac
+if [ "${OS:-}" = 'Windows_NT' ]; then
+    gradle_command='./gradlew.bat'
+else
+    case "$(uname -s)" in
+        CYGWIN* | MINGW* | MSYS*) gradle_command='./gradlew.bat' ;;
+        *) gradle_command='./gradlew' ;;
+    esac
+fi
 
 if ! "$gradle_command" spotlessCheck --no-daemon; then
     printf '\nCommit blocked: formatting check failed.\n' >&2
     printf 'Run the formatter and review the changes before staging again:\n' >&2
-    printf '%s\n' '  .\gradlew.bat spotlessApply' >&2
+    printf '  %s spotlessApply\n' "$gradle_command" >&2
     exit 1
 fi
