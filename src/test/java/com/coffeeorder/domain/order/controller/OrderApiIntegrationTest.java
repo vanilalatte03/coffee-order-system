@@ -17,9 +17,11 @@ import com.coffeeorder.domain.order.service.CreateOrderResult;
 import com.coffeeorder.domain.order.service.OrderFacade;
 import com.coffeeorder.domain.outbox.entity.OutboxEvent;
 import com.coffeeorder.domain.outbox.repository.OutboxEventRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.time.Instant;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +43,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private OrderFacade orderFacade;
     @Autowired private DataSource dataSource;
+    @Autowired private ObjectMapper objectMapper;
     @MockitoSpyBean private IdempotencyRequestWriter idempotencyRequestWriter;
     @MockitoSpyBean private OutboxEventRepository outboxEventRepository;
 
@@ -59,19 +62,23 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Test
     void 주문_성공은_모든_기록을_한_건씩_원자적으로_만들고_snapshot을_반환한다() throws Exception {
-        mockMvc.perform(order("order-success", "{\"userId\":10,\"menuId\":2}"))
-                .andExpect(status().isCreated())
-                .andExpect(header().string("Idempotency-Replayed", "false"))
-                .andExpect(jsonPath("$.orderId").isNumber())
-                .andExpect(jsonPath("$.userId").value(10))
-                .andExpect(jsonPath("$.menu.menuId").value(2))
-                .andExpect(jsonPath("$.menu.name").value("카페라떼"))
-                .andExpect(jsonPath("$.unitPrice").value(5000))
-                .andExpect(jsonPath("$.quantity").value(1))
-                .andExpect(jsonPath("$.paidAmount").value(5000))
-                .andExpect(jsonPath("$.remainingPointBalance").value(5000))
-                .andExpect(jsonPath("$.status").value("PAID"))
-                .andExpect(jsonPath("$.paidAt").isString());
+        String responseBody =
+                mockMvc.perform(order("order-success", "{\"userId\":10,\"menuId\":2}"))
+                        .andExpect(status().isCreated())
+                        .andExpect(header().string("Idempotency-Replayed", "false"))
+                        .andExpect(jsonPath("$.orderId").isNumber())
+                        .andExpect(jsonPath("$.userId").value(10))
+                        .andExpect(jsonPath("$.menu.menuId").value(2))
+                        .andExpect(jsonPath("$.menu.name").value("카페라떼"))
+                        .andExpect(jsonPath("$.unitPrice").value(5000))
+                        .andExpect(jsonPath("$.quantity").value(1))
+                        .andExpect(jsonPath("$.paidAmount").value(5000))
+                        .andExpect(jsonPath("$.remainingPointBalance").value(5000))
+                        .andExpect(jsonPath("$.status").value("PAID"))
+                        .andExpect(jsonPath("$.paidAt").isString())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
 
         assertThat(balance()).isEqualTo(5000);
         assertThat(count("orders")).isEqualTo(1);
@@ -82,16 +89,21 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
                         jdbcTemplate.queryForObject(
                                 "SELECT order_id FROM point_transactions", Long.class))
                 .isEqualTo(jdbcTemplate.queryForObject("SELECT id FROM orders", Long.class));
-        assertThat(
+        Instant responsePaidAt =
+                Instant.parse(objectMapper.readTree(responseBody).path("paidAt").asText());
+        Instant outboxOccurredAt =
+                Instant.parse(
                         jdbcTemplate.queryForObject(
                                 "SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.occurredAt')) FROM outbox_events",
-                                String.class))
-                .isEqualTo(
-                        jdbcTemplate
-                                .queryForObject(
-                                        "SELECT DATE_FORMAT(paid_at, '%Y-%m-%dT%H:%i:%s.%fZ') FROM orders",
-                                        String.class)
-                                .replaceFirst("0+Z$", "Z"));
+                                String.class));
+        Instant databasePaidAt =
+                jdbcTemplate
+                        .queryForObject("SELECT paid_at FROM orders", Timestamp.class)
+                        .toInstant();
+
+        assertThat(responsePaidAt).isEqualTo(databasePaidAt);
+        assertThat(outboxOccurredAt).isEqualTo(databasePaidAt);
+        assertThat(databasePaidAt.getNano() % 1_000).isZero();
     }
 
     @Test
