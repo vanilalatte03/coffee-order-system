@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -20,12 +21,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
 @SpringBootTest
+@ExtendWith(OutputCaptureExtension.class)
 class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-07-11T00:00:00Z");
@@ -108,6 +113,49 @@ class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @Test
+    void lease를_잃은_stale_claim은_DB상태와_결과_metric을_확정하지_않는다(CapturedOutput output) {
+        List<OrderEventPublishResult> results =
+                List.of(
+                        OrderEventPublishResult.success(),
+                        OrderEventPublishResult.retryableFailure("timeout"),
+                        OrderEventPublishResult.permanentFailure("bad request"));
+
+        for (OrderEventPublishResult result : results) {
+            jdbcTemplate.update("DELETE FROM outbox_events");
+            String eventId = insert("PENDING", 0, NOW.minusSeconds(1), NOW.minusSeconds(1));
+            String resultTag = result.type().name().toLowerCase();
+            double resultBefore = deliveryResultCount(resultTag);
+            double staleBefore = deliveryResultCount("stale_claim");
+
+            coordinator(
+                            event -> {
+                                assertThat(event.eventId()).isEqualTo(eventId);
+                                assertThat(
+                                                jdbcTemplate.update(
+                                                        """
+                                                        UPDATE outbox_events
+                                                        SET claim_token = ?, locked_by = 'new-owner', locked_until = ?
+                                                        WHERE event_id = ? AND status = 'PROCESSING'
+                                                        """,
+                                                        UUID.randomUUID().toString(),
+                                                        Timestamp.from(NOW.plusSeconds(60)),
+                                                        eventId))
+                                        .isEqualTo(1);
+                                return result;
+                            })
+                    .dispatchNext("stale-worker");
+
+            assertThat(status(eventId)).isEqualTo("PROCESSING");
+            assertThat(deliveryResultCount(resultTag) - resultBefore).isZero();
+            assertThat(deliveryResultCount("stale_claim") - staleBefore).isEqualTo(1);
+        }
+
+        assertThat(output)
+                .contains("outbox_delivery_stale_claim")
+                .doesNotContain("outbox_delivery_completed", "outbox_delivery_failed");
+    }
+
     private OutboxDeliveryCoordinator coordinator(OrderEventPublisher publisher) {
         return new OutboxDeliveryCoordinator(
                 deliveryRepository,
@@ -120,7 +168,8 @@ class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
                 operationalMetrics);
     }
 
-    private void insert(String status, int attempts, Instant eligibleAt, Instant createdAt) {
+    private String insert(String status, int attempts, Instant eligibleAt, Instant createdAt) {
+        String eventId = UUID.randomUUID().toString();
         jdbcTemplate.update(
                 """
                 INSERT INTO outbox_events (
@@ -128,13 +177,14 @@ class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
                     status, attempt_count, next_attempt_at, created_at, updated_at)
                 VALUES (?, 'ORDER', ?, 'ORDER_PAID', 1, '{}', ?, ?, ?, ?, ?)
                 """,
-                UUID.randomUUID().toString(),
+                eventId,
                 Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000) + 1,
                 status,
                 attempts,
                 Timestamp.from(eligibleAt),
                 Timestamp.from(createdAt),
                 Timestamp.from(createdAt));
+        return eventId;
     }
 
     private void insertProcessingAtAttemptLimit() {
@@ -163,6 +213,11 @@ class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
 
     private double gauge(String status) {
         return meterRegistry.get("coffee.outbox.events").tag("status", status).gauge().value();
+    }
+
+    private String status(String eventId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT status FROM outbox_events WHERE event_id = ?", String.class, eventId);
     }
 
     private long timerCount(String name) {

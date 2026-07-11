@@ -3,6 +3,7 @@ package com.coffeeorder.global.observability;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
@@ -70,6 +71,17 @@ class Phase11ObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(meterRegistry.find("coffee.api.requests").tag("orderId", "1").meter()).isNull();
         assertThat(meterRegistry.find("coffee.api.requests").tag("eventId", "event").meter())
                 .isNull();
+    }
+
+    @Test
+    void Actuator는_custom_metric만_조회하고_민감_endpoint는_노출하지_않는다() throws Exception {
+        mockMvc.perform(get("/api/v1/menus")).andExpect(status().isOk());
+
+        mockMvc.perform(get("/actuator/metrics/coffee.api.requests"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("coffee.api.requests"));
+        mockMvc.perform(get("/actuator/env")).andExpect(status().isNotFound());
+        mockMvc.perform(get("/actuator/configprops")).andExpect(status().isNotFound());
     }
 
     private double idempotencyCount(String outcome) {

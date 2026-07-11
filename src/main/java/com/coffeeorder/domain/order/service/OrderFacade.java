@@ -120,7 +120,7 @@ public class OrderFacade {
                         order.paymentAmount(),
                         order.paidAt()));
         log.info(
-                "order_paid traceId={} userId={} orderId={} operation=ORDER_CREATE resultCode=SUCCESS",
+                "order_payment_attempted traceId={} userId={} orderId={} operation=ORDER_CREATE resultCode=PENDING_COMMIT",
                 traceId,
                 order.userId(),
                 order.orderId());

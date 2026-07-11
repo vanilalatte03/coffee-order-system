@@ -55,7 +55,7 @@ public class RecordOrderPaidEventService {
                                 eventId, command.orderId(), serialize(payload), occurredAt));
         applicationEventPublisher.publishEvent(new OrderEventRecorded(eventId));
         log.info(
-                "outbox_event_recorded traceId={} userId={} orderId={} eventId={} operation=ORDER_PAID resultCode=PENDING",
+                "outbox_event_record_attempted traceId={} userId={} orderId={} eventId={} operation=ORDER_PAID resultCode=PENDING_COMMIT",
                 TraceIdFilter.currentTraceId(),
                 command.userId(),
                 command.orderId(),

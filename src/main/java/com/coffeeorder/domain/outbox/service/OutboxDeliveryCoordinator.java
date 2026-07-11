@@ -103,8 +103,19 @@ public class OutboxDeliveryCoordinator {
         }
         Instant completedAt = now();
         OrderEventPublishResult finalResult = result;
-        transaction.executeWithoutResult(ignored -> applyResult(event, finalResult, completedAt));
-        recordDeliveryMetrics(event, result, completedAt);
+        boolean applied =
+                Boolean.TRUE.equals(
+                        transaction.execute(
+                                ignored -> applyResult(event, finalResult, completedAt)));
+        if (applied) {
+            recordDeliveryMetrics(event, result, completedAt);
+        } else {
+            metrics.increment("coffee.outbox.delivery.results", "result", "stale_claim");
+            log.warn(
+                    "outbox_delivery_stale_claim eventId={} attempt={} operation=ORDER_PAID resultCode=STALE_CLAIM",
+                    event.eventId(),
+                    event.attemptCount());
+        }
         return true;
     }
 
@@ -149,31 +160,40 @@ public class OutboxDeliveryCoordinator {
                         candidate.createdAt()));
     }
 
-    private void applyResult(
+    private boolean applyResult(
             ClaimedOrderEvent event, OrderEventPublishResult result, Instant completedAt) {
-        switch (result.type()) {
-            case SUCCESS ->
-                    repository.markPublished(event.eventId(), event.claimToken(), completedAt);
-            case PERMANENT_FAILURE ->
-                    repository.markFailedByClaimToken(
-                            event.eventId(), event.claimToken(), completedAt, result.error());
-            case RETRYABLE_FAILURE -> {
-                if (event.attemptCount() >= MAX_ATTEMPTS) {
-                    repository.markFailedByClaimToken(
-                            event.eventId(), event.claimToken(), completedAt, result.error());
-                } else {
-                    Duration delay =
-                            backoffPolicy.retryDelay(
-                                    event.attemptCount(), jitterFactor.getAsDouble());
-                    repository.markPending(
-                            event.eventId(),
-                            event.claimToken(),
-                            normalize(completedAt.plus(delay)),
-                            completedAt,
-                            result.error());
-                }
-            }
-        }
+        int updatedRows =
+                switch (result.type()) {
+                    case SUCCESS ->
+                            repository.markPublished(
+                                    event.eventId(), event.claimToken(), completedAt);
+                    case PERMANENT_FAILURE ->
+                            repository.markFailedByClaimToken(
+                                    event.eventId(),
+                                    event.claimToken(),
+                                    completedAt,
+                                    result.error());
+                    case RETRYABLE_FAILURE -> {
+                        if (event.attemptCount() >= MAX_ATTEMPTS) {
+                            yield repository.markFailedByClaimToken(
+                                    event.eventId(),
+                                    event.claimToken(),
+                                    completedAt,
+                                    result.error());
+                        } else {
+                            Duration delay =
+                                    backoffPolicy.retryDelay(
+                                            event.attemptCount(), jitterFactor.getAsDouble());
+                            yield repository.markPending(
+                                    event.eventId(),
+                                    event.claimToken(),
+                                    normalize(completedAt.plus(delay)),
+                                    completedAt,
+                                    result.error());
+                        }
+                    }
+                };
+        return updatedRows == 1;
     }
 
     private static void requireSingleUpdate(int updatedRows) {
