@@ -1,6 +1,7 @@
 package com.coffeeorder.infra.outbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
 import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository;
@@ -80,25 +81,35 @@ class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
         String eventId = insertPending();
         AdjustableClock clock = new AdjustableClock(NOW);
         OrderEventPublisher http = adapter();
-        AtomicBoolean loseFirstResult = new AtomicBoolean(true);
+        AtomicBoolean crashAfterFirstSuccess = new AtomicBoolean(true);
         OrderEventPublisher crashWindow =
                 event -> {
                     OrderEventPublishResult received = http.publish(event);
-                    if (loseFirstResult.getAndSet(false)) {
-                        assertThat(received.type()).isEqualTo(OrderEventPublishResult.Type.SUCCESS);
-                        return OrderEventPublishResult.retryableFailure(
-                                "process stopped before state update");
+                    assertThat(received.type()).isEqualTo(OrderEventPublishResult.Type.SUCCESS);
+                    if (crashAfterFirstSuccess.getAndSet(false)) {
+                        throw new SimulatedProcessCrash();
                     }
                     return received;
                 };
         OutboxDeliveryWorker worker = worker(clock, crashWindow, "duplicate-worker");
 
-        assertThat(worker.runOneCycle()).isEqualTo(1);
-        clock.set(nextAttemptAt(eventId));
+        assertThatThrownBy(worker::runOneCycle).isInstanceOf(SimulatedProcessCrash.class);
+        String firstClaimToken = stringColumn(eventId, "claim_token");
+        Instant firstLockedUntil = timestampColumn(eventId, "locked_until");
+        assertThat(status(eventId)).isEqualTo("PROCESSING");
+        assertThat(attemptCount(eventId)).isEqualTo(1);
+        assertThat(firstClaimToken).isNotBlank();
+        assertThat(stringColumn(eventId, "locked_by")).isEqualTo("duplicate-worker");
+        assertThat(firstLockedUntil).isEqualTo(NOW.plusSeconds(30));
+
+        clock.set(firstLockedUntil.plusNanos(1_000));
         assertThat(worker.runOneCycle()).isEqualTo(1);
 
-        assertThat(httpStub.requests()).hasSize(2);
+        assertThat(httpStub.requests())
+                .extracting(OrderEventHttpStub.Request::eventId)
+                .containsExactly(eventId, eventId);
         assertThat(httpStub.appliedCount()).isEqualTo(1);
+        assertThat(attemptCount(eventId)).isEqualTo(2);
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
     }
 
@@ -235,6 +246,22 @@ class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
                 .toInstant();
     }
 
+    private String stringColumn(String eventId, String column) {
+        return jdbcTemplate.queryForObject(
+                "SELECT " + column + " FROM outbox_events WHERE event_id = ?",
+                String.class,
+                eventId);
+    }
+
+    private Instant timestampColumn(String eventId, String column) {
+        return jdbcTemplate
+                .queryForObject(
+                        "SELECT " + column + " FROM outbox_events WHERE event_id = ?",
+                        Timestamp.class,
+                        eventId)
+                .toInstant();
+    }
+
     private static int runWhenReady(
             OutboxDeliveryWorker worker, CountDownLatch ready, CountDownLatch start) {
         ready.countDown();
@@ -283,4 +310,6 @@ class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
             return instant;
         }
     }
+
+    private static final class SimulatedProcessCrash extends Error {}
 }
