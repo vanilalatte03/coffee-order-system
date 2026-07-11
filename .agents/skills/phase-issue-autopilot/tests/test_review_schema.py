@@ -104,6 +104,11 @@ class SchemaParityTests(unittest.TestCase):
                     "tldr", "<!-- phase-issue-autopilot-review: 금지"
                 )
             ),
+            mutation(
+                lambda value: value["findings"][0].__setitem__(
+                    "good", "<!-- phase-issue-autopilot-finding: 금지"
+                )
+            ),
             mutation(lambda value: value["findings"][0].__setitem__("title", "두\n줄")),
             mutation(lambda value: value["findings"][0].__setitem__("path", "../secret")),
             mutation(lambda value: value["findings"].append(copy.deepcopy(value["findings"][0]))),

@@ -1,6 +1,6 @@
 ---
 name: phase-issue-autopilot
-description: coffee-order-system의 docs/phases 계획을 GitHub Issue 정본으로 순차 실행한다. 각 Step을 하나의 Issue·fresh worker·branch·PR로 구현하고 develop에만 자동 병합하며, review-code와 동일한 2층 형식의 PR 전체 요약과 라인별 코멘트를 게시하고 같은 branch 수정·재리뷰를 최대 2회 수행한다. Phase 구현, Step Issue 생성, one-step-one-PR 자동화, develop 통합 후 main 사람 리뷰 흐름을 요청할 때 사용한다.
+description: coffee-order-system의 docs/phases 계획을 GitHub Issue 정본으로 순차 실행한다. 각 Step을 하나의 Issue·fresh worker·branch·PR로 구현하고 develop에만 자동 병합하며, review-code와 동일한 2층 형식의 PR 전체 요약과 라인별 코멘트를 게시하고 같은 branch 수정·재리뷰와 해결된 autopilot thread 정리를 최대 2회 수행한다. Phase 구현, Step Issue 생성, one-step-one-PR 자동화, develop 통합 후 main 사람 리뷰 흐름을 요청할 때 사용한다.
 ---
 
 # Phase Issue Autopilot
@@ -162,6 +162,9 @@ python .agents/skills/phase-issue-autopilot/scripts/publish_review.py publish `
 - `path`, `line`, `side`가 현재 diff에 유효하지 않은 finding은 게시 실패로 처리하고 review worker에게 anchor 수정을 요청한다.
 - 같은 base/head SHA와 payload digest marker가 이미 있으면 중복 게시하지 않는다.
 - 다른 작성자가 복제한 marker는 현재 autopilot 리뷰로 인정하지 않는다.
+- 각 finding은 독립 inline thread로 게시하고, root comment에 repository, canonical Issue,
+  PR, base/head SHA, review digest와 `finding_key`를 결합한 hidden marker를 남긴다. 같은
+  anchor의 finding도 한 comment에 합치지 않는다.
 - review 게시가 실패하거나 postflight에서 SHA drift가 확인되면 merge하지 않는다. 이미 제출된 stale review가 남더라도 marker의 base/head SHA가 현재 snapshot과 다르므로 merge 근거로 재사용하지 않는다.
 
 ## 수정·재리뷰
@@ -172,7 +175,34 @@ python .agents/skills/phase-issue-autopilot/scripts/publish_review.py publish `
 2. 로컬 검증을 다시 실행하고 commit·push한다.
 3. 새 head SHA의 CI를 기다린다.
 4. fresh read-only review를 다시 실행하고 게시한다.
-5. fix push 뒤 re-review는 최대 2회까지만 허용한다.
+5. fresh review 게시이 완료된 뒤 `scripts/resolve_review_threads.py`에 이전·현재 review
+   envelope를 전달해 이전 snapshot의 autopilot thread만 정리한다. 먼저 dry-run 결과를
+   확인하고 GitHub write 권한이 있는 실행에서만 `--apply`를 사용한다.
+6. fix push 뒤 re-review는 최대 2회까지만 허용한다.
+
+```powershell
+python .agents/skills/phase-issue-autopilot/scripts/resolve_review_threads.py `
+  --previous-input <previous-review.json> `
+  --current-input <fresh-review.json> `
+  --repo <owner/repo> `
+  --pr <number> `
+  --expected-base develop
+```
+
+thread resolver는 `reviewThreads`, review와 nested comment를 최대 100 page까지 pagination해
+root comment 작성자와 hidden marker를 검증한다. 반복 cursor, 다음 page가 있는데 비어 있는
+page 또는 page 상한 초과는 block한다. 사람이 만든 thread와 다른 작성자가 복제한 marker는
+절대 resolve하지 않는다.
+fresh findings에서 사라진 `finding_key`만 fixed로 정리하며, 같은 key가 새 anchor에서 다시
+발견된 경우에는 이전 thread가 GitHub에서 outdated이고 새 snapshot의 owned thread가 별도로
+존재할 때만 이전 thread를 정리한다. 현재 `critical/major/minor/nit` finding의 thread는
+resolve하지 않는다.
+
+resolve 전후에는 open PR의 repository, canonical Issue, base/head snapshot과 이전·현재 review
+marker/digest를 다시 검증한다. `viewerCanResolve=false`이면 block한다. mutation 응답이 유실되면
+blind retry하지 않고 thread를 다시 조회하며 `isResolved=true`인 경우에만 성공을 복구한다.
+postflight에서 `isResolved=true`를 확인하지 못하면 merge를 block한다. 이미 resolved인 thread는
+skip하고, 같은 host의 같은 PR resolver는 OS file lock으로 직렬화한다.
 
 두 번째 re-review에도 blocking finding이 남으면 Issue와 PR을 열린 상태로 두고 blocker, 마지막 green validation, 남은 finding을 기록한 뒤 전체 Phase 실행을 멈춘다.
 

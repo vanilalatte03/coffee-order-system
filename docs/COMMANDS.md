@@ -136,6 +136,36 @@ python3 -m pip install --disable-pip-version-check --no-input --requirement .age
 python3 -m unittest discover -s .agents/skills/phase-issue-autopilot/tests -p "test_*.py"
 ```
 
+fix push 뒤 fresh review가 게시되면 이전 autopilot inline review thread의 정리 계획을
+dry-run으로 확인한다. `<previous-review.json>`과 `<fresh-review.json>`은 각각 게시에 사용한
+schema version 2 envelope다.
+
+Windows PowerShell:
+
+```powershell
+python .agents/skills/phase-issue-autopilot/scripts/resolve_review_threads.py `
+  --previous-input <previous-review.json> `
+  --current-input <fresh-review.json> `
+  --repo <owner/repo> `
+  --pr <number> `
+  --expected-base develop
+```
+
+POSIX 셸(Linux, macOS, WSL):
+
+```sh
+python3 .agents/skills/phase-issue-autopilot/scripts/resolve_review_threads.py \
+  --previous-input <previous-review.json> \
+  --current-input <fresh-review.json> \
+  --repo <owner/repo> \
+  --pr <number> \
+  --expected-base develop
+```
+
+dry-run이 의도한 이전 autopilot thread만 `candidates`로 출력한 경우에만 같은 명령에
+`--apply`를 추가한다. 사람이 만든 thread, 현재 review에 남은 finding, 소유권이나 snapshot을
+검증하지 못한 thread는 resolve하지 않는다.
+
 작업 완료 전 foreground로 실행한 `bootRun` 또는 `java -jar` 터미널이 있다면 해당 터미널에서 `Ctrl+C`로 정상 종료한다. Windows에서는 실행 중인 프로세스가 JAR 파일을 잠가 `clean build`가 실패할 수 있다.
 
 실행 프로세스가 종료된 것을 확인한 뒤 포맷을 검사하고 전체 빌드를 실행한다.
@@ -163,7 +193,8 @@ GitHub Actions의 [CI workflow](../.github/workflows/ci.yml)는 `develop`·`main
 - JDK 21과 저장소의 Gradle Wrapper를 사용한다.
 - pull request에서는 변경 범위의 공백 오류를 검사한다.
 - `clean build`로 포맷, 테스트, 컴파일과 패키징을 검증한다.
-- Phase Issue 자동 실행 스킬의 상태 전이와 review envelope schema parity를 Python 단위 테스트로 검증한다.
+- Phase Issue 자동 실행 스킬의 상태 전이, review 게시·thread resolve 상태 머신과 review
+  envelope schema parity를 Python 단위 테스트로 검증한다.
 - 실패한 테스트 리포트는 7일 동안 workflow artifact로 보존한다.
 - 문서도 Spotless 검사 대상이므로 문서만 변경한 pull request도 CI를 생략하지 않는다.
 

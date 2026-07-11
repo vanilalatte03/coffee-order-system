@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from collections import Counter, defaultdict
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator
@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterator
 
 API_VERSION = "2026-03-10"
 MARKER_PREFIX = "<!-- phase-issue-autopilot-review:"
+FINDING_MARKER_PREFIX = "<!-- phase-issue-autopilot-finding:"
 MARKER_RE = re.compile(
     r"<!-- phase-issue-autopilot-review:v2 "
     r"repo=(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) "
@@ -133,7 +134,7 @@ def _expect_exact_keys(value: dict[str, Any], expected: set[str], label: str) ->
 def _validate_text(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ReviewError(f"{label}은 비어 있지 않은 문자열이어야 합니다.")
-    if MARKER_PREFIX in value or "\x00" in value:
+    if MARKER_PREFIX in value or FINDING_MARKER_PREFIX in value or "\x00" in value:
         raise ReviewError(f"{label}에 금지된 marker 또는 NUL이 있습니다.")
     return value
 
@@ -518,6 +519,15 @@ def _finding_comment(finding: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _finding_marker(envelope: dict[str, Any], finding: dict[str, Any], digest: str) -> str:
+    return (
+        f"<!-- phase-issue-autopilot-finding:v1 repo={envelope['repository']} "
+        f"issue={envelope['issue_number']} pr={envelope['pull_number']} "
+        f"base={envelope['base']['sha']} head={envelope['head']['sha']} "
+        f"digest={digest} key={finding['finding_key']} -->"
+    )
+
+
 def build_payload(envelope: dict[str, Any]) -> tuple[dict[str, Any], str]:
     findings = sorted(
         envelope["findings"],
@@ -529,20 +539,15 @@ def build_payload(envelope: dict[str, Any]) -> tuple[dict[str, Any], str]:
             finding["finding_key"],
         ),
     )
-    grouped: dict[tuple[str, int, str], list[dict[str, Any]]] = defaultdict(list)
-    for finding in findings:
-        grouped[(finding["path"], finding["line"], finding["side"])].append(finding)
-
-    comments = []
-    for (path, line, side), items in sorted(grouped.items()):
-        comments.append(
-            {
-                "path": path,
-                "line": line,
-                "side": side,
-                "body": "\n\n---\n\n".join(_finding_comment(item) for item in items),
-            }
-        )
+    markerless_comments = [
+        {
+            "path": finding["path"],
+            "line": finding["line"],
+            "side": finding["side"],
+            "body": _finding_comment(finding),
+        }
+        for finding in findings
+    ]
 
     counts = Counter(finding["severity"] for finding in findings)
     summary = envelope["summary"]
@@ -582,7 +587,7 @@ def build_payload(envelope: dict[str, Any]) -> tuple[dict[str, Any], str]:
     )
     body_without_marker = "\n".join(summary_lines).strip()
     digest_source = json.dumps(
-        {"body": body_without_marker, "comments": comments},
+        {"body": body_without_marker, "comments": markerless_comments},
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -594,6 +599,17 @@ def build_payload(envelope: dict[str, Any]) -> tuple[dict[str, Any], str]:
         f"base={envelope['base']['sha']} "
         f"head={envelope['head']['sha']} digest={digest} -->"
     )
+    comments = []
+    for finding, comment in zip(findings, markerless_comments, strict=True):
+        comments.append(
+            {
+                **comment,
+                "body": (
+                    f"{comment['body']}\n\n"
+                    f"{_finding_marker(envelope, finding, digest)}"
+                ),
+            }
+        )
     return {
         "commit_id": envelope["head"]["sha"],
         "body": f"{body_without_marker}\n\n{marker}",

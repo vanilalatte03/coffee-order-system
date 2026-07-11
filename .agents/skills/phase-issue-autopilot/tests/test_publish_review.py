@@ -261,6 +261,30 @@ class PublishStateMachineTests(unittest.TestCase):
                 with publish_review._same_host_review_lock(value):
                     self.fail("두 번째 publisher가 lock을 획득했습니다.")
 
+    def test_each_finding_has_an_independent_stable_hidden_marker(self) -> None:
+        findings = [
+            {
+                "finding_key": key,
+                "dimension": "correctness",
+                "severity": "minor",
+                "title": f"제목 {key}",
+                "tldr": "설명",
+                "good": "좋은 점",
+                "fix_markdown": "수정하세요.",
+                "path": "src/example.py",
+                "line": 1,
+                "side": "RIGHT",
+            }
+            for key in ("one", "two")
+        ]
+
+        payload, digest = publish_review.build_payload(envelope(findings=findings))
+
+        self.assertEqual(2, len(payload["comments"]))
+        for key, comment in zip(("one", "two"), payload["comments"], strict=True):
+            self.assertIn(f"digest={digest} key={key} -->", comment["body"])
+            self.assertEqual(1, comment["body"].count("phase-issue-autopilot-finding:v1"))
+
 
 if __name__ == "__main__":
     unittest.main()
