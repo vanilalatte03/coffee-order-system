@@ -6,6 +6,7 @@ import com.coffeeorder.domain.point.dto.ChargePointsRequest;
 import com.coffeeorder.domain.point.service.ChargePointsCommand;
 import com.coffeeorder.domain.point.service.ChargePointsResult;
 import com.coffeeorder.domain.point.service.ChargePointsService;
+import com.coffeeorder.global.observability.RequestObservability;
 import com.coffeeorder.global.observability.TraceIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -48,12 +49,16 @@ public class PointChargeController {
             @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody ChargePointsRequest request,
             HttpServletRequest servletRequest) {
+        RequestObservability.operation(servletRequest, "POINT_CHARGE");
+        RequestObservability.user(servletRequest, userId);
         validateKey(idempotencyKey);
         ChargePointsResult result =
                 chargePointsService.charge(
                         new ChargePointsCommand(userId, request.amount(), idempotencyKey),
                         clock.instant(),
                         TraceIdFilter.getTraceId(servletRequest));
+        RequestObservability.resultFromResponse(
+                servletRequest, result.status(), result.responseBody());
         return ResponseEntity.status(result.status())
                 .contentType(JSON_UTF8)
                 .header("Idempotency-Replayed", Boolean.toString(result.replayed()))

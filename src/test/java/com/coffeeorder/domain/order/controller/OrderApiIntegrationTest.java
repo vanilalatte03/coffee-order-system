@@ -26,9 +26,12 @@ import java.time.Instant;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -37,6 +40,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@ExtendWith(OutputCaptureExtension.class)
 class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private MockMvc mockMvc;
@@ -168,7 +172,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
     }
 
     @Test
-    void completed_flush_실패는_전체_롤백되고_같은_키_재시도는_정확히_한_번만_쓴다() {
+    void completed_flush_실패는_확정_성공_로그_없이_롤백되고_재시도는_한_번만_쓴다(CapturedOutput output) {
         doThrow(new DataIntegrityViolationException("forced completed failure"))
                 .when(idempotencyRequestWriter)
                 .flushCompleted(any());
@@ -177,6 +181,9 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("forced completed failure");
         assertNoEffects();
+        assertThat(output)
+                .contains("order_payment_attempted", "outbox_event_record_attempted")
+                .doesNotContain("order_paid ", "outbox_event_recorded ");
 
         reset(idempotencyRequestWriter, outboxEventRepository);
         assertThat(perform("completed-failure", 2).status()).isEqualTo(201);

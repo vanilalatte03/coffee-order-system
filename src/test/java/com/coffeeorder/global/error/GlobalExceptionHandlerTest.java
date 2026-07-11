@@ -3,6 +3,7 @@ package com.coffeeorder.global.error;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -13,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import java.sql.SQLException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +24,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -118,6 +121,65 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.code").value("CONCURRENCY_TIMEOUT"));
     }
 
+    @Test
+    void DB_연결_실패는_SQL을_응답과_로그에서_숨긴_503으로_변환한다(CapturedOutput output) throws Exception {
+        mockMvc.perform(get("/test-fixture/database-unavailable"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.code").value("DATABASE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.message").value("데이터베이스를 일시적으로 사용할 수 없습니다."))
+                .andExpect(
+                        content()
+                                .string(
+                                        org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString("SELECT"))))
+                .andExpect(
+                        content()
+                                .string(
+                                        org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString(
+                                                        "secret_table"))));
+        assertThat(output)
+                .doesNotContain("SELECT password FROM secret_table", "database-password-secret");
+    }
+
+    @Test
+    void 정상_비즈니스_거절_서버_오류는_각_요청의_traceId를_로그와_응답에_유지한다(CapturedOutput output) throws Exception {
+        MvcResult normal = mockMvc.perform(get("/test-fixture/success")).andReturn();
+        MvcResult business = mockMvc.perform(get("/test-fixture/business-rejection")).andReturn();
+        MvcResult server = mockMvc.perform(get("/test-fixture/failure")).andReturn();
+
+        String normalTrace = normal.getResponse().getHeader(TraceIdFilter.TRACE_ID_HEADER);
+        String businessTrace =
+                objectMapper
+                        .readTree(business.getResponse().getContentAsByteArray())
+                        .path("traceId")
+                        .asText();
+        String serverTrace =
+                objectMapper
+                        .readTree(server.getResponse().getContentAsByteArray())
+                        .path("traceId")
+                        .asText();
+
+        assertThat(normalTrace).isNotBlank();
+        assertThat(business.getResponse().getHeader(TraceIdFilter.TRACE_ID_HEADER))
+                .isEqualTo(businessTrace);
+        assertThat(server.getResponse().getHeader(TraceIdFilter.TRACE_ID_HEADER))
+                .isEqualTo(serverTrace);
+        assertThat(output)
+                .contains(
+                        "traceId=" + normalTrace,
+                        "traceId=" + businessTrace,
+                        "traceId=" + serverTrace);
+        assertThat(output)
+                .doesNotContain(
+                        "request-body-secret",
+                        "response-body-secret",
+                        "pointBalance=",
+                        "idempotencySnapshot=",
+                        "database-password-secret");
+    }
+
     @RestController
     @RequestMapping("/test-fixture")
     public static class FixtureController {
@@ -133,6 +195,23 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/lock-timeout")
         void lockTimeout() {
             throw new CannotAcquireLockException("forced lock timeout");
+        }
+
+        @GetMapping("/database-unavailable")
+        void databaseUnavailable() {
+            throw new CannotGetJdbcConnectionException(
+                    "SELECT password FROM secret_table",
+                    new SQLException("database-password-secret", "08001"));
+        }
+
+        @GetMapping("/success")
+        String success() {
+            return "ok";
+        }
+
+        @GetMapping("/business-rejection")
+        void businessRejection() {
+            throw new com.coffeeorder.domain.user.service.UserNotFoundException(999);
         }
     }
 

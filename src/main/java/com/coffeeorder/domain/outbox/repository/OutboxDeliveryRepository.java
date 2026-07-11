@@ -101,7 +101,7 @@ public class OutboxDeliveryRepository {
         if (candidateId.status() == OutboxStatus.PENDING) {
             return jdbcTemplate.query(
                     """
-                    SELECT event_id, payload, status, attempt_count
+                    SELECT event_id, payload, status, attempt_count, created_at
                     FROM outbox_events
                     WHERE event_id = ? AND status = 'PENDING'
                         AND attempt_count < ? AND next_attempt_at <= ?
@@ -114,7 +114,7 @@ public class OutboxDeliveryRepository {
         }
         return jdbcTemplate.query(
                 """
-                SELECT event_id, payload, status, attempt_count
+                SELECT event_id, payload, status, attempt_count, created_at
                 FROM outbox_events
                 WHERE event_id = ? AND status = 'PROCESSING' AND locked_until < ?
                 FOR UPDATE SKIP LOCKED
@@ -192,7 +192,8 @@ public class OutboxDeliveryRepository {
                 resultSet.getString("event_id"),
                 resultSet.getString("payload"),
                 OutboxStatus.valueOf(resultSet.getString("status")),
-                resultSet.getInt("attempt_count"));
+                resultSet.getInt("attempt_count"),
+                resultSet.getTimestamp("created_at").toInstant());
     }
 
     private static String limitedError(String error) {
@@ -203,7 +204,11 @@ public class OutboxDeliveryRepository {
     }
 
     public record LockedCandidate(
-            String eventId, String payload, OutboxStatus status, int attemptCount) {}
+            String eventId,
+            String payload,
+            OutboxStatus status,
+            int attemptCount,
+            Instant createdAt) {}
 
     private record CandidateId(String eventId, OutboxStatus status) {}
 }

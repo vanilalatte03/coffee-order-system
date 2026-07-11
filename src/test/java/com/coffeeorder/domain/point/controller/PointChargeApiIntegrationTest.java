@@ -17,6 +17,7 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyRequestWriter;
 import com.coffeeorder.domain.point.service.ChargePointsCommand;
 import com.coffeeorder.domain.point.service.ChargePointsResult;
 import com.coffeeorder.domain.point.service.ChargePointsService;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -47,6 +48,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private DataSource dataSource;
     @Autowired private ChargePointsService chargePointsService;
+    @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private IdempotencyRequestWriter idempotencyRequestWriter;
 
     @BeforeEach
@@ -215,6 +217,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Test
     void 실제_지갑_락_timeout은_503이고_같은_키_재시도는_정확히_한_번_충전한다() throws Exception {
+        double timeoutBefore = walletLockFailureCount("lock_timeout");
         try (Connection lockHolder = dataSource.getConnection()) {
             lockHolder.setAutoCommit(false);
             try (PreparedStatement lock =
@@ -235,6 +238,8 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
                     .andExpect(header().string("Retry-After", "1"))
                     .andExpect(jsonPath("$.code").value("CONCURRENCY_TIMEOUT"));
 
+            assertThat(walletLockFailureCount("lock_timeout") - timeoutBefore).isEqualTo(1);
+
             assertThat(balanceOf(10)).isZero();
             assertThat(ledgerCount()).isZero();
             assertThat(idempotencyCount()).isZero();
@@ -253,6 +258,15 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(balanceOf(10)).isEqualTo(100);
         assertThat(ledgerCount()).isEqualTo(1);
         assertThat(idempotencyCount()).isEqualTo(1);
+    }
+
+    private double walletLockFailureCount(String type) {
+        var counter =
+                meterRegistry
+                        .find("coffee.wallet.lock.failures")
+                        .tags("operation", "charge", "type", type)
+                        .counter();
+        return counter == null ? 0 : counter.count();
     }
 
     @Test

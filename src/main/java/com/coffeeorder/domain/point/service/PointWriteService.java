@@ -5,8 +5,11 @@ import com.coffeeorder.domain.point.entity.PointTransaction;
 import com.coffeeorder.domain.point.entity.PointWallet;
 import com.coffeeorder.domain.point.repository.PointTransactionRepository;
 import com.coffeeorder.domain.point.repository.PointWalletRepository;
+import com.coffeeorder.global.error.DatabaseFailureClassifier;
+import com.coffeeorder.global.observability.OperationalMetrics;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.function.BiFunction;
@@ -22,16 +25,19 @@ public class PointWriteService {
     private final PointTransactionRepository pointTransactionRepository;
     private final Clock clock;
     private final EntityManager entityManager;
+    private final OperationalMetrics metrics;
 
     public PointWriteService(
             PointWalletRepository pointWalletRepository,
             PointTransactionRepository pointTransactionRepository,
             Clock clock,
-            EntityManager entityManager) {
+            EntityManager entityManager,
+            OperationalMetrics metrics) {
         this.pointWalletRepository = pointWalletRepository;
         this.pointTransactionRepository = pointTransactionRepository;
         this.clock = clock;
         this.entityManager = entityManager;
+        this.metrics = metrics;
     }
 
     @Transactional(propagation = Propagation.REQUIRED)
@@ -43,10 +49,7 @@ public class PointWriteService {
             propagation = Propagation.REQUIRED,
             noRollbackFor = PointBalanceOverflowException.class)
     public PointChargeResult chargeWithResult(long userId, long amount) {
-        PointWallet wallet =
-                pointWalletRepository
-                        .findByUserIdForUpdate(userId)
-                        .orElseThrow(() -> new PointWalletNotFoundException(userId));
+        PointWallet wallet = lockWallet(userId, "charge");
         Instant changedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
         long balance = wallet.charge(amount, changedAt);
         PointTransaction transaction =
@@ -68,10 +71,7 @@ public class PointWriteService {
 
     @Transactional(propagation = Propagation.REQUIRED)
     public PointPaymentPreparation preparePayment(long userId, long amount) {
-        PointWallet wallet =
-                pointWalletRepository
-                        .findByUserIdForUpdate(userId)
-                        .orElseThrow(() -> new PointWalletNotFoundException(userId));
+        PointWallet wallet = lockWallet(userId, "payment");
         if (wallet.getBalance() < amount) {
             return PointPaymentPreparation.insufficient();
         }
@@ -104,14 +104,39 @@ public class PointWriteService {
             long amount,
             BalanceChange balanceChange,
             BiFunction<PointWallet, Instant, PointTransaction> transactionFactory) {
-        PointWallet wallet =
-                pointWalletRepository
-                        .findByUserIdForUpdate(userId)
-                        .orElseThrow(() -> new PointWalletNotFoundException(userId));
+        PointWallet wallet = lockWallet(userId, "balance_change");
         Instant changedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
         long balanceAfter = balanceChange.apply(wallet, amount, changedAt);
         pointTransactionRepository.save(transactionFactory.apply(wallet, changedAt));
         return balanceAfter;
+    }
+
+    private PointWallet lockWallet(long userId, String operation) {
+        long startedAt = System.nanoTime();
+        try {
+            return pointWalletRepository
+                    .findByUserIdForUpdate(userId)
+                    .orElseThrow(() -> new PointWalletNotFoundException(userId));
+        } catch (RuntimeException exception) {
+            DatabaseFailureClassifier.Failure failure =
+                    DatabaseFailureClassifier.classify(exception);
+            if (failure == DatabaseFailureClassifier.Failure.LOCK_TIMEOUT
+                    || failure == DatabaseFailureClassifier.Failure.DEADLOCK) {
+                metrics.increment(
+                        "coffee.wallet.lock.failures",
+                        "operation",
+                        operation,
+                        "type",
+                        failure.name().toLowerCase());
+            }
+            throw exception;
+        } finally {
+            metrics.record(
+                    "coffee.wallet.lock.wait",
+                    Duration.ofNanos(System.nanoTime() - startedAt),
+                    "operation",
+                    operation);
+        }
     }
 
     @FunctionalInterface

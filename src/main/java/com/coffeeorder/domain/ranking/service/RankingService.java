@@ -2,6 +2,7 @@ package com.coffeeorder.domain.ranking.service;
 
 import com.coffeeorder.domain.ranking.repository.PopularMenuQueryRepository;
 import com.coffeeorder.domain.ranking.repository.PopularMenuQueryRow;
+import com.coffeeorder.global.observability.OperationalMetrics;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -18,17 +19,32 @@ public class RankingService {
 
     private final Clock clock;
     private final PopularMenuQueryRepository popularMenuQueryRepository;
+    private final OperationalMetrics metrics;
 
-    public RankingService(Clock clock, PopularMenuQueryRepository popularMenuQueryRepository) {
+    public RankingService(
+            Clock clock,
+            PopularMenuQueryRepository popularMenuQueryRepository,
+            OperationalMetrics metrics) {
         this.clock = clock;
         this.popularMenuQueryRepository = popularMenuQueryRepository;
+        this.metrics = metrics;
     }
 
     @Transactional(readOnly = true)
     public PopularMenuRankingResult getPopularMenus() {
         Instant to = clock.instant().truncatedTo(ChronoUnit.MICROS);
         Instant from = to.minus(RANKING_PERIOD);
-        List<PopularMenuQueryRow> rows = popularMenuQueryRepository.findPopularMenus(from, to);
+        long startedAt = System.nanoTime();
+        List<PopularMenuQueryRow> rows;
+        try {
+            rows = popularMenuQueryRepository.findPopularMenus(from, to);
+        } finally {
+            metrics.record(
+                    "coffee.ranking.query.duration",
+                    Duration.ofNanos(System.nanoTime() - startedAt),
+                    "query",
+                    "popular_menus");
+        }
         List<PopularMenuItemResult> items = new ArrayList<>(rows.size());
 
         for (int index = 0; index < rows.size(); index++) {
