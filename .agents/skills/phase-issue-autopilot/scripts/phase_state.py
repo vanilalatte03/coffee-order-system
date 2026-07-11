@@ -24,6 +24,8 @@ MARKER_RE = re.compile(
     r"<!-- phase-step:v1 phase=(?P<phase>[a-z0-9][a-z0-9-]*) "
     r"step=(?P<step>\d{2}) doc=(?P<doc>[A-Za-z0-9_./-]+) -->"
 )
+TRACKED_BRANCH_RE = re.compile(r"(?m)^- branch: `(?P<value>[^`\r\n]+)`$")
+TRACKED_PR_RE = re.compile(r"(?m)^- PR: (?P<value>[^\r\n]+)$")
 PHASE_RE = re.compile(r"^phase-\d+$")
 STEP_DOC_RE = re.compile(
     r"^docs/phases/(?P<phase>phase-\d+)/step-(?P<step>\d{2})-[a-z0-9][a-z0-9-]*\.md$"
@@ -297,6 +299,75 @@ def _parse_marker(body: str) -> list[dict[str, str]]:
     return matches
 
 
+def _tracking_value(body: str, pattern: re.Pattern[str]) -> str | None:
+    matches = [match.group("value").strip() for match in pattern.finditer(body or "")]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _pr_closes_issue(body: str, issue_number: int) -> bool:
+    closing = re.compile(
+        rf"(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#0*{issue_number}\b"
+    )
+    return closing.search(body or "") is not None
+
+
+def _linked_branches_for_issue(repo: str, issue_number: int) -> list[dict[str, str]]:
+    owner, name = repo.split("/", 1)
+    query = """
+query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      linkedBranches(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ref { name repository { nameWithOwner } } }
+      }
+    }
+  }
+}
+""".strip()
+    cursor: str | None = None
+    branches: list[dict[str, str]] = []
+    while True:
+        args = [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"repo={name}",
+            "-F",
+            f"number={issue_number}",
+        ]
+        if cursor is not None:
+            args.extend(("-F", f"cursor={cursor}"))
+        payload = _run_gh_json(args)
+        try:
+            connection = payload["data"]["repository"]["issue"]["linkedBranches"]
+            nodes = connection["nodes"]
+            page_info = connection["pageInfo"]
+        except (KeyError, TypeError) as exc:
+            raise GitHubError("linked branch GraphQL 응답 형식이 올바르지 않습니다.") from exc
+        if not isinstance(nodes, list) or not isinstance(page_info, dict):
+            raise GitHubError("linked branch GraphQL 응답 형식이 올바르지 않습니다.")
+        for node in nodes:
+            ref = node.get("ref") if isinstance(node, dict) else None
+            if ref is None:
+                continue
+            repository = ref.get("repository") if isinstance(ref, dict) else None
+            branch_name = ref.get("name") if isinstance(ref, dict) else None
+            repository_name = repository.get("nameWithOwner") if isinstance(repository, dict) else None
+            if not isinstance(branch_name, str) or not isinstance(repository_name, str):
+                raise GitHubError("linked branch ref 응답 형식이 올바르지 않습니다.")
+            branches.append({"name": branch_name, "repository": repository_name})
+        if page_info.get("hasNextPage") is not True:
+            return branches
+        cursor = page_info.get("endCursor")
+        if not isinstance(cursor, str) or not cursor:
+            raise GitHubError("linked branch pagination cursor가 없습니다.")
+
+
 def inspect_state(repo: str, spec: IssueSpec) -> dict[str, Any]:
     _validate_repo(repo)
     _validate_spec(spec)
@@ -390,22 +461,72 @@ def inspect_state(repo: str, spec: IssueSpec) -> dict[str, Any]:
     ):
         blockers.append("CLOSED_ISSUE_WITHOUT_MERGED_PR")
 
+    canonical_issue_number: int | None = None
+    linked_branches: list[dict[str, str]] = []
+    tracked_branch: str | None = None
+    tracked_pr: str | None = None
+    if len(exact) == 1:
+        issue = exact[0]
+        issue_number = issue.get("number")
+        if not isinstance(issue_number, int) or isinstance(issue_number, bool):
+            raise GitHubError("정본 Issue 번호가 올바르지 않습니다.")
+        canonical_issue_number = issue_number
+        issue_body = str(issue.get("body") or "")
+        tracked_branch = _tracking_value(issue_body, TRACKED_BRANCH_RE)
+        tracked_pr = _tracking_value(issue_body, TRACKED_PR_RE)
+        linked_branches = _linked_branches_for_issue(repo, issue_number)
+        matching_links = [
+            branch
+            for branch in linked_branches
+            if branch["repository"].lower() == repo.lower() and branch["name"] == spec.branch
+        ]
+        actual_pr = prs[0] if len(prs) == 1 and isinstance(prs[0], dict) else None
+
+        if tracked_branch != spec.branch:
+            blockers.append("ISSUE_PR_LINK_MISMATCH")
+        if len(linked_branches) > 1:
+            blockers.append("DUPLICATE_LINKED_BRANCH")
+        elif linked_branches and len(matching_links) != 1:
+            blockers.append("ISSUE_PR_LINK_MISMATCH")
+
+        if actual_pr is None:
+            if tracked_pr != "미생성":
+                blockers.append("ISSUE_PR_LINK_MISMATCH")
+        else:
+            if not merged_prs and len(matching_links) != 1:
+                blockers.append("ISSUE_PR_LINK_MISMATCH")
+            if tracked_pr != actual_pr.get("url"):
+                blockers.append("ISSUE_PR_LINK_MISMATCH")
+            if actual_pr.get("headRefName") != spec.branch:
+                blockers.append("ISSUE_PR_LINK_MISMATCH")
+            if not _pr_closes_issue(str(actual_pr.get("body") or ""), issue_number):
+                blockers.append("ISSUE_PR_LINK_MISMATCH")
+
+    blockers = list(dict.fromkeys(blockers))
+
     if blockers:
         next_action = "blocked"
     elif exact:
         issue_open = exact[0].get("state") == "OPEN"
-        next_action = "close_issue" if issue_open and reachable_merge_commits else "resume"
+        if reachable_merge_commits:
+            next_action = "close_issue" if issue_open else "complete"
+        else:
+            next_action = "resume"
     else:
         next_action = "create_issue"
     return {
         "base": DEFAULT_BASE,
         "branch": spec.branch,
+        "canonical_issue_number": canonical_issue_number,
         "issue_matches": exact,
         "conflicting_issue_markers": conflicting,
         "legacy_candidates": legacy,
+        "linked_branches": linked_branches,
         "next_action": next_action,
         "pr_matches": prs,
         "reachable_merge_commits": reachable_merge_commits,
+        "tracked_branch": tracked_branch,
+        "tracked_pr": tracked_pr,
         "blockers": blockers,
     }
 

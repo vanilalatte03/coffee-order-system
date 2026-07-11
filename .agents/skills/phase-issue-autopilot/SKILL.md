@@ -130,7 +130,7 @@ review worker에는 다음을 지시한다.
 - `codex exec -s read-only` 또는 동등한 완전 read-only 환경을 사용한다.
 - `origin/develop...HEAD`와 현재 Step 계약만 리뷰한다.
 - 미래 Step 미구현을 finding으로 만들지 않는다.
-- `references/review-envelope.schema.json`의 schema version 2와 일치하는 JSON만 반환한다.
+- `references/review-envelope.schema.json`의 schema version 2와 일치하고 정본 `issue_number`를 포함하는 JSON만 반환한다.
 - 각 finding은 `review-code`의 1층을 그대로 표현하도록 `title`, `tldr`, `good`, `fix_markdown`과 GitHub anchor를 반환한다. `tldr`와 `good`은 각각 한 줄이며 `fix_markdown`은 `→ Fix:` 아래에 그대로 출력할 Markdown이다.
 - `summary`는 `review-code`의 2층을 그대로 표현하도록 2~3줄 `walkthrough`, 하나 이상의 `strengths`, 하나 이상의 `next_actions`를 반환한다.
 - `body` 하나로 축약하거나 `TL;DR`, `Good`, `Fix`, `Walkthrough`, `잘된 점`, `다음 액션` 중 하나를 생략하지 않는다.
@@ -185,7 +185,7 @@ Step 자동 merge 권한이 명시된 실행에서만 다음을 수행한다.
 1. PR이 Draft면 ready로 전환한다.
 2. strict required status checks 또는 merge queue가 최신 `develop`과 동기화되지 않은 head의 merge를 server-side에서 거부하는지 다시 확인한다. 입증할 수 없으면 merge-ready 상태에서 멈춘다.
 3. `origin/develop`을 fetch하고 PR의 현재 base SHA가 review envelope의 base SHA와 같은지 확인한다. 다르면 최신 `develop`을 Step branch에 regular merge하고 새 head SHA에서 로컬 검증, CI, fresh review와 게시를 전부 다시 수행한다.
-4. 최신 head SHA의 로컬 검증, `verify`, review verdict와 base/head snapshot을 다시 확인한다.
+4. 최신 head SHA의 로컬 검증, `verify`, review verdict, canonical Issue 번호와 base/head snapshot을 다시 확인한다.
 5. `gh pr merge <PR> --squash --delete-branch --match-head-commit <reviewed-sha>`를 실행한다.
 6. PR이 실제로 `develop`에 merge됐고 merge commit이 현재 remote `develop`에서 reachable한지 확인한다.
 7. Issue에 validation, CI, review, merge 결과를 기록하고 명시적으로 close한다. 이미 닫혔으면 상태만 검증한다.

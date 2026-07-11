@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "repository",
+    "issue_number",
     "pull_number",
     "phase",
     "step",
@@ -25,6 +26,10 @@
     "repository": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "issue_number": {
+      "type": "integer",
+      "minimum": 1
     },
     "pull_number": {
       "type": "integer",
@@ -61,11 +66,130 @@
     },
     "findings": {
       "type": "array",
+      "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/finding"
       }
     }
   },
+  "allOf": [
+    {
+      "properties": {
+        "base": {
+          "properties": {
+            "ref": {
+              "const": "develop"
+            }
+          }
+        },
+        "head": {
+          "properties": {
+            "ref": {
+              "pattern": "^codex/phase-[0-9]+-step-[0-9]{2}-[a-z0-9][a-z0-9-]*$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "findings": {
+            "contains": {
+              "properties": {
+                "severity": {
+                  "const": "critical"
+                }
+              },
+              "required": [
+                "severity"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verdict": {
+            "const": "BLOCKED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "findings": {
+            "allOf": [
+              {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "severity": {
+                        "const": "critical"
+                      }
+                    },
+                    "required": [
+                      "severity"
+                    ]
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "severity": {
+                      "const": "major"
+                    }
+                  },
+                  "required": [
+                    "severity"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verdict": {
+            "const": "CHANGES_REQUESTED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "findings": {
+            "not": {
+              "contains": {
+                "properties": {
+                  "severity": {
+                    "enum": [
+                      "critical",
+                      "major"
+                    ]
+                  }
+                },
+                "required": [
+                  "severity"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verdict": {
+            "const": "APPROVE"
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "nonBlankText": {
       "type": "string",

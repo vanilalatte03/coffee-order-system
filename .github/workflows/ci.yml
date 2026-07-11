@@ -46,6 +46,12 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
 
+      - name: Phase Issue 자동 실행 스킬 테스트 의존성 설치
+        run: python3 -m pip install --disable-pip-version-check --no-input --requirement .agents/skills/phase-issue-autopilot/requirements-test.txt
+
+      - name: Phase Issue 자동 실행 스킬 회귀 테스트
+        run: python3 -m unittest discover -s .agents/skills/phase-issue-autopilot/tests -p "test_*.py"
+
       - name: 포맷, 테스트와 빌드 검증
         run: ./gradlew --no-daemon clean build
 

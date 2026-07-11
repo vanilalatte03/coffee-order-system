@@ -22,7 +22,7 @@ MARKER_PREFIX = "<!-- phase-issue-autopilot-review:"
 MARKER_RE = re.compile(
     r"<!-- phase-issue-autopilot-review:v2 "
     r"repo=(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) "
-    r"pr=(?P<pr>\d+) base=(?P<base>[0-9a-f]{40}) "
+    r"issue=(?P<issue>\d+) pr=(?P<pr>\d+) base=(?P<base>[0-9a-f]{40}) "
     r"head=(?P<head>[0-9a-f]{40}) digest=(?P<digest>[0-9a-f]{64}) -->"
 )
 HUNK_RE = re.compile(
@@ -56,6 +56,7 @@ DIMENSIONS = (
 TOP_LEVEL_KEYS = {
     "schema_version",
     "repository",
+    "issue_number",
     "pull_number",
     "phase",
     "step",
@@ -225,6 +226,10 @@ def validate_envelope(
     if expected_repo is not None and repo.lower() != expected_repo.lower():
         raise ReviewError("CLI repository와 envelope repository가 다릅니다.")
 
+    issue_number = value["issue_number"]
+    if not isinstance(issue_number, int) or isinstance(issue_number, bool) or issue_number < 1:
+        raise ReviewError("issue_number는 양의 정수여야 합니다.")
+
     pull_number = value["pull_number"]
     if not isinstance(pull_number, int) or isinstance(pull_number, bool) or pull_number < 1:
         raise ReviewError("pull_number는 양의 정수여야 합니다.")
@@ -316,6 +321,7 @@ def validate_envelope(
     return {
         "schema_version": 2,
         "repository": repo,
+        "issue_number": issue_number,
         "pull_number": pull_number,
         "phase": phase,
         "step": step,
@@ -412,6 +418,11 @@ def _verify_pr_snapshot(pr: Any, envelope: dict[str, Any], expected_base: str) -
         raise SnapshotError("PR base SHA가 리뷰 snapshot과 다릅니다.")
     if head_ref != envelope["head"]["ref"] or head_sha != envelope["head"]["sha"]:
         raise SnapshotError("PR head ref/SHA가 리뷰 snapshot과 다릅니다.")
+    closing = re.compile(
+        rf"(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#0*{envelope['issue_number']}\b"
+    )
+    if closing.search(str(pr.get("body") or "")) is None:
+        raise SnapshotError("PR 본문이 review envelope의 canonical Issue를 종료하도록 연결하지 않습니다.")
 
 
 def parse_patch(patch: str) -> set[tuple[int, str]]:
@@ -579,7 +590,8 @@ def build_payload(envelope: dict[str, Any]) -> tuple[dict[str, Any], str]:
     digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
     marker = (
         f"<!-- phase-issue-autopilot-review:v2 repo={envelope['repository']} "
-        f"pr={envelope['pull_number']} base={envelope['base']['sha']} "
+        f"issue={envelope['issue_number']} pr={envelope['pull_number']} "
+        f"base={envelope['base']['sha']} "
         f"head={envelope['head']['sha']} digest={digest} -->"
     )
     return {
@@ -662,6 +674,7 @@ def _find_existing(
             continue
         if (
             marker["repo"].lower() == repo.lower()
+            and int(marker["issue"]) == envelope["issue_number"]
             and int(marker["pr"]) == pr
             and marker["base"] == envelope["base"]["sha"]
             and marker["head"] == envelope["head"]["sha"]

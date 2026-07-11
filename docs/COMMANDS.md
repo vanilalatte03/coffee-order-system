@@ -120,6 +120,22 @@ POSIX 셸(Linux, macOS, WSL):
 ./gradlew test
 ```
 
+Phase Issue 자동 실행 스킬의 Python 회귀 테스트를 실행하기 전에 테스트 의존성을 설치한다.
+
+Windows PowerShell:
+
+```powershell
+python -m pip install --disable-pip-version-check --no-input --requirement .agents/skills/phase-issue-autopilot/requirements-test.txt
+python -m unittest discover -s .agents/skills/phase-issue-autopilot/tests -p "test_*.py"
+```
+
+POSIX 셸(Linux, macOS, WSL):
+
+```sh
+python3 -m pip install --disable-pip-version-check --no-input --requirement .agents/skills/phase-issue-autopilot/requirements-test.txt
+python3 -m unittest discover -s .agents/skills/phase-issue-autopilot/tests -p "test_*.py"
+```
+
 작업 완료 전 foreground로 실행한 `bootRun` 또는 `java -jar` 터미널이 있다면 해당 터미널에서 `Ctrl+C`로 정상 종료한다. Windows에서는 실행 중인 프로세스가 JAR 파일을 잠가 `clean build`가 실패할 수 있다.
 
 실행 프로세스가 종료된 것을 확인한 뒤 포맷을 검사하고 전체 빌드를 실행한다.
@@ -147,6 +163,7 @@ GitHub Actions의 [CI workflow](../.github/workflows/ci.yml)는 `develop`·`main
 - JDK 21과 저장소의 Gradle Wrapper를 사용한다.
 - pull request에서는 변경 범위의 공백 오류를 검사한다.
 - `clean build`로 포맷, 테스트, 컴파일과 패키징을 검증한다.
+- Phase Issue 자동 실행 스킬의 상태 전이와 review envelope schema parity를 Python 단위 테스트로 검증한다.
 - 실패한 테스트 리포트는 7일 동안 workflow artifact로 보존한다.
 - 문서도 Spotless 검사 대상이므로 문서만 변경한 pull request도 CI를 생략하지 않는다.
 
