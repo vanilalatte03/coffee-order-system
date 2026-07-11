@@ -15,6 +15,52 @@ Gradle 8.14.5 Wrapper를 저장소에 포함하므로 Gradle은 별도로 설치
 
 Docker daemon 가동 여부 확인, Git hook 설정, 코드 포맷, Windows PowerShell과 POSIX 셸 실행 및 검증 방법은 [Commands](./docs/COMMANDS.md)를 참고합니다.
 
+로컬 실행과 통합 테스트는 실제 pull·기동을 확인한 `mysql:8.0.42` 이미지를 함께 사용합니다.
+
+### 로컬 MySQL과 애플리케이션 실행
+
+먼저 `docker version` 출력에 `Server` 섹션이 있는지 확인합니다. 아래 명령은 `coffee-order-mysql` 컨테이너를 만들고 MySQL 준비 상태를 확인합니다.
+
+Windows PowerShell:
+
+```powershell
+docker run --name coffee-order-mysql --detach --publish 3307:3306 --env MYSQL_DATABASE=coffee_order --env MYSQL_USER=coffee --env MYSQL_PASSWORD=coffee --env MYSQL_ROOT_PASSWORD=root mysql:8.0.42
+do { docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcoffee --silent; if ($LASTEXITCODE -ne 0) { Start-Sleep -Seconds 1 } } while ($LASTEXITCODE -ne 0)
+$env:DB_URL = 'jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
+$env:DB_USERNAME = 'coffee'
+$env:DB_PASSWORD = 'coffee'
+.\gradlew.bat bootRun
+```
+
+POSIX 셸(Linux, macOS, WSL):
+
+```sh
+docker run --name coffee-order-mysql --detach --publish 3307:3306 --env MYSQL_DATABASE=coffee_order --env MYSQL_USER=coffee --env MYSQL_PASSWORD=coffee --env MYSQL_ROOT_PASSWORD=root mysql:8.0.42
+until docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcoffee --silent; do sleep 1; done
+export DB_URL='jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
+export DB_USERNAME='coffee'
+export DB_PASSWORD='coffee'
+./gradlew bootRun
+```
+
+다른 터미널에서 `http://localhost:8080/actuator/health`가 `UP`인지 확인합니다. 애플리케이션을 `Ctrl+C`로 종료한 뒤 MySQL 컨테이너도 제거합니다.
+
+Windows PowerShell:
+
+```powershell
+Invoke-RestMethod http://localhost:8080/actuator/health
+docker stop coffee-order-mysql
+docker rm coffee-order-mysql
+```
+
+POSIX 셸(Linux, macOS, WSL):
+
+```sh
+curl --fail --silent --show-error http://localhost:8080/actuator/health
+docker stop coffee-order-mysql
+docker rm coffee-order-mysql
+```
+
 ### IntelliJ에서 실행
 
 1. IntelliJ에서 이 저장소의 루트 폴더를 엽니다.
@@ -23,7 +69,7 @@ Docker daemon 가동 여부 확인, Git hook 설정, 코드 포맷, Windows Powe
 4. `CoffeeOrderSystemApplication`의 `main` 메서드를 실행합니다.
 5. 브라우저에서 [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)를 열어 `{"status":"UP"}`을 확인합니다.
 
-현재 초기 설정은 외부 DB 없이 기동됩니다. JPA, MySQL, Flyway는 다음 구현 단계에서 함께 연결합니다.
+Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
 
 ## 목표
 
