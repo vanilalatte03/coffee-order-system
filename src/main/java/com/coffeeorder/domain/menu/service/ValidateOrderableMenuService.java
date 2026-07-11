@@ -15,7 +15,9 @@ public class ValidateOrderableMenuService {
         this.menuRepository = menuRepository;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(
+            readOnly = true,
+            noRollbackFor = {MenuNotFoundException.class, MenuNotOrderableException.class})
     public OrderableMenuResult validate(long menuId) {
         Menu menu =
                 menuRepository
