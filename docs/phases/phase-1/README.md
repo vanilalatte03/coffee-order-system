@@ -22,15 +22,17 @@ Kafka와 Redis는 Phase 2 범위이므로 이 계획에 포함하지 않는다.
 
 ## 2. 실행 원칙
 
-- Phase 실행은 이 계획과 Phase Step Issue 템플릿이 기본 브랜치에 병합된 뒤 시작한다. 로컬에만 있는 미추적 계획을 기준으로 Step branch를 만들지 않는다.
+- Phase 실행은 이 계획, Phase Step Issue 템플릿, 실행 스킬과 CI가 integration branch인 `develop`에 반영된 뒤 시작한다. 로컬에만 있는 운영 기반을 기준으로 Step branch를 만들지 않는다.
 - **한 step은 한 branch와 한 PR**로 구현한다.
-- 각 PR은 바로 이전 step이 기본 브랜치에 병합된 상태에서 시작한다.
-- Step branch를 만들기 전에 기본 브랜치를 최신 상태로 맞추고 작업 트리가 깨끗한지 확인한다.
+- 각 PR은 바로 이전 step이 `develop`에 병합된 상태에서 시작하고 `develop`을 base로 사용한다.
+- Step branch를 만들기 전에 `develop`이 최신 `main`을 포함하는지, 작업 트리가 깨끗한지 확인한다.
+- Step PR 자동 병합은 `develop`의 strict status check 또는 동등한 merge queue가 최신 base에서 `verify`를 강제할 때만 허용한다.
 - 각 step의 진행 상태, 담당자, blocker, 실제 branch·PR과 검증 결과는 GitHub Issues에서 관리한다.
 - 아직 공개 계약을 완성하지 못한 기반 PR은 외부 API를 노출하지 않고 내부 기능과 테스트만 추가한다.
 - 각 PR은 코드와 해당 테스트를 함께 포함하며, 다음 step의 미완성 코드를 미리 넣지 않는다.
 - API·스키마·아키텍처 계약을 변경해야 한다면 같은 PR에서 정본 문서와 ADR을 갱신한다.
 - 커밋·원격 push·PR 생성 권한은 루트 `AGENTS.md`의 핵심 작업 규칙을 따른다.
+- 모든 Step이 `develop`에 병합된 뒤 전체 완료 게이트를 다시 검증하고, `develop -> main` release PR은 사람이 최종 리뷰한다. Phase 자동화는 이 release PR을 병합하지 않는다.
 
 ## 3. PR 지도
 
