@@ -61,6 +61,29 @@ public class PointWriteService {
                                 userId, orderId, amount, wallet.getBalance(), changedAt));
     }
 
+    @Transactional(propagation = Propagation.REQUIRED)
+    public PointPaymentPreparation preparePayment(long userId, long amount) {
+        PointWallet wallet =
+                pointWalletRepository
+                        .findByUserIdForUpdate(userId)
+                        .orElseThrow(() -> new PointWalletNotFoundException(userId));
+        if (wallet.getBalance() < amount) {
+            return PointPaymentPreparation.insufficient();
+        }
+        return PointPaymentPreparation.sufficient(new PointPaymentLock(wallet, amount));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRED)
+    public long completePayment(PointPaymentLock paymentLock, long orderId) {
+        Instant changedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        PointWallet wallet = paymentLock.consume();
+        long balance = wallet.pay(paymentLock.amount(), changedAt);
+        pointTransactionRepository.saveAndFlush(
+                PointTransaction.payment(
+                        wallet.getUserId(), orderId, paymentLock.amount(), balance, changedAt));
+        return balance;
+    }
+
     private long changeBalance(
             long userId,
             long amount,
