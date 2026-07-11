@@ -17,6 +17,9 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyRequestWriter;
 import com.coffeeorder.domain.point.service.ChargePointsCommand;
 import com.coffeeorder.domain.point.service.ChargePointsResult;
 import com.coffeeorder.domain.point.service.ChargePointsService;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +27,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +45,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private DataSource dataSource;
     @Autowired private ChargePointsService chargePointsService;
     @MockitoSpyBean private IdempotencyRequestWriter idempotencyRequestWriter;
 
@@ -203,6 +208,48 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         reset(idempotencyRequestWriter);
         var retry = performCharge("flush-failure", 100);
         assertThat(retry.status()).isEqualTo(201);
+        assertThat(balanceOf(10)).isEqualTo(100);
+        assertThat(ledgerCount()).isEqualTo(1);
+        assertThat(idempotencyCount()).isEqualTo(1);
+    }
+
+    @Test
+    void 실제_지갑_락_timeout은_503이고_같은_키_재시도는_정확히_한_번_충전한다() throws Exception {
+        try (Connection lockHolder = dataSource.getConnection()) {
+            lockHolder.setAutoCommit(false);
+            try (PreparedStatement lock =
+                    lockHolder.prepareStatement(
+                            "SELECT user_id FROM point_wallets WHERE user_id = ? FOR UPDATE")) {
+                lock.setLong(1, 10);
+                try (ResultSet resultSet = lock.executeQuery()) {
+                    assertThat(resultSet.next()).isTrue();
+                }
+            }
+
+            mockMvc.perform(
+                            post("/api/v1/users/10/points/charges")
+                                    .header("Idempotency-Key", "lock-timeout-retry")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content("{\"amount\":100}"))
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(header().string("Retry-After", "1"))
+                    .andExpect(jsonPath("$.code").value("CONCURRENCY_TIMEOUT"));
+
+            assertThat(balanceOf(10)).isZero();
+            assertThat(ledgerCount()).isZero();
+            assertThat(idempotencyCount()).isZero();
+            lockHolder.rollback();
+        }
+
+        mockMvc.perform(
+                        post("/api/v1/users/10/points/charges")
+                                .header("Idempotency-Key", "lock-timeout-retry")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"amount\":100}"))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotency-Replayed", "false"))
+                .andExpect(jsonPath("$.balance").value(100));
+
         assertThat(balanceOf(10)).isEqualTo(100);
         assertThat(ledgerCount()).isEqualTo(1);
         assertThat(idempotencyCount()).isEqualTo(1);
