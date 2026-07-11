@@ -101,6 +101,10 @@ public class PointTransaction {
         return balanceAfter;
     }
 
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
     private static void validatePositive(long amount) {
         if (amount <= 0) {
             throw new InvalidPointAmountException(amount);

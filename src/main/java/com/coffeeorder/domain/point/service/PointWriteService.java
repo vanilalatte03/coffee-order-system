@@ -1,5 +1,6 @@
 package com.coffeeorder.domain.point.service;
 
+import com.coffeeorder.domain.point.entity.PointBalanceOverflowException;
 import com.coffeeorder.domain.point.entity.PointTransaction;
 import com.coffeeorder.domain.point.entity.PointWallet;
 import com.coffeeorder.domain.point.repository.PointTransactionRepository;
@@ -30,12 +31,23 @@ public class PointWriteService {
 
     @Transactional(propagation = Propagation.REQUIRED)
     public long charge(long userId, long amount) {
-        return changeBalance(
-                userId,
-                amount,
-                PointWallet::charge,
-                (wallet, changedAt) ->
-                        PointTransaction.charge(userId, amount, wallet.getBalance(), changedAt));
+        return chargeWithResult(userId, amount).balance();
+    }
+
+    @Transactional(
+            propagation = Propagation.REQUIRED,
+            noRollbackFor = PointBalanceOverflowException.class)
+    public PointChargeResult chargeWithResult(long userId, long amount) {
+        PointWallet wallet =
+                pointWalletRepository
+                        .findByUserIdForUpdate(userId)
+                        .orElseThrow(() -> new PointWalletNotFoundException(userId));
+        Instant changedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        long balance = wallet.charge(amount, changedAt);
+        PointTransaction transaction =
+                pointTransactionRepository.saveAndFlush(
+                        PointTransaction.charge(userId, amount, balance, changedAt));
+        return new PointChargeResult(transaction.getId(), balance, changedAt);
     }
 
     @Transactional(propagation = Propagation.REQUIRED)

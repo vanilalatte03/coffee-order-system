@@ -9,6 +9,7 @@ spring:
     enabled: true
   jackson:
     deserialization:
+      accept-float-as-int: false
       fail-on-unknown-properties: true
   jpa:
     hibernate:
