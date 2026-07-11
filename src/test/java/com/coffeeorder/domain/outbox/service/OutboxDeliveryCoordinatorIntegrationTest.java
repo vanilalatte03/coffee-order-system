@@ -172,6 +172,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
         assertThat(nullableTimestamp(eventId, "published_at")).isEqualTo(Timestamp.from(NOW));
         assertThat(nullableString(eventId, "claim_token")).isNull();
+        assertThat(nullableString(eventId, "locked_by")).isNull();
         assertThat(nullableTimestamp(eventId, "locked_until")).isNull();
     }
 
@@ -188,6 +189,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(timestamp(retryable, "next_attempt_at"))
                 .isEqualTo(Timestamp.from(NOW.plusSeconds(1)));
         assertThat(nullableString(retryable, "last_error")).isEqualTo("timeout");
+        assertClaimFieldsCleared(retryable);
 
         retryClock.set(NOW.plusSeconds(1));
         OutboxDeliveryCoordinator permanentCoordinator =
@@ -198,6 +200,27 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(status(retryable)).isEqualTo("FAILED");
         assertThat(attemptCount(retryable)).isEqualTo(2);
         assertThat(nullableString(retryable, "last_error")).isEqualTo("bad request");
+        assertClaimFieldsCleared(retryable);
+    }
+
+    @Test
+    void publisherExceptionBecomesRetryableFailureAndClearsClaim() {
+        String eventId = insertPending(NOW, 0);
+        OutboxDeliveryCoordinator coordinator =
+                coordinator(
+                        NOW,
+                        event -> {
+                            throw new IllegalStateException("boom");
+                        });
+
+        assertThat(coordinator.dispatchNext("worker-exception")).isTrue();
+
+        assertThat(status(eventId)).isEqualTo("PENDING");
+        assertThat(attemptCount(eventId)).isEqualTo(1);
+        assertThat(timestamp(eventId, "next_attempt_at"))
+                .isEqualTo(Timestamp.from(NOW.plusSeconds(1)));
+        assertThat(nullableString(eventId, "last_error")).isEqualTo("IllegalStateException: boom");
+        assertClaimFieldsCleared(eventId);
     }
 
     @Test
@@ -373,29 +396,35 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
 
     @Test
     void concurrentWorkersClaimOneCandidateOnlyOnce() throws Exception {
-        insertPending(NOW, 0);
+        String eventId = insertPending(NOW, 0);
         AtomicInteger calls = new AtomicInteger();
-        CountDownLatch publisherEntered = new CountDownLatch(1);
-        CountDownLatch releasePublisher = new CountDownLatch(1);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
         OrderEventPublisher publisher =
                 event -> {
                     calls.incrementAndGet();
-                    publisherEntered.countDown();
-                    await(releasePublisher);
                     return OrderEventPublishResult.success();
                 };
         OutboxDeliveryCoordinator first = coordinator(NOW, publisher);
         OutboxDeliveryCoordinator second = coordinator(NOW, publisher);
 
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Future<Boolean> firstResult = executor.submit(() -> first.dispatchNext("worker-1"));
-            assertThat(publisherEntered.await(5, TimeUnit.SECONDS)).isTrue();
-            Future<Boolean> secondResult = executor.submit(() -> second.dispatchNext("worker-2"));
-            assertThat(secondResult.get(5, TimeUnit.SECONDS)).isFalse();
-            releasePublisher.countDown();
-            assertThat(firstResult.get(5, TimeUnit.SECONDS)).isTrue();
+            Future<Boolean> firstResult =
+                    executor.submit(() -> dispatchWhenStarted(first, "worker-1", ready, start));
+            Future<Boolean> secondResult =
+                    executor.submit(() -> dispatchWhenStarted(second, "worker-2", ready, start));
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            assertThat(
+                            List.of(
+                                    firstResult.get(5, TimeUnit.SECONDS),
+                                    secondResult.get(5, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
         }
         assertThat(calls).hasValue(1);
+        assertThat(attemptCount(eventId)).isEqualTo(1);
+        assertThat(status(eventId)).isEqualTo("PUBLISHED");
     }
 
     @Test
@@ -520,6 +549,22 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
                 FROM outbox_events WHERE event_id = ?
                 """,
                 eventId);
+    }
+
+    private void assertClaimFieldsCleared(String eventId) {
+        assertThat(nullableString(eventId, "claim_token")).isNull();
+        assertThat(nullableString(eventId, "locked_by")).isNull();
+        assertThat(nullableTimestamp(eventId, "locked_until")).isNull();
+    }
+
+    private static boolean dispatchWhenStarted(
+            OutboxDeliveryCoordinator coordinator,
+            String workerId,
+            CountDownLatch ready,
+            CountDownLatch start) {
+        ready.countDown();
+        await(start);
+        return coordinator.dispatchNext(workerId);
     }
 
     private static void await(CountDownLatch latch) {

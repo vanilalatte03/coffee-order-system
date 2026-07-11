@@ -19,6 +19,8 @@ class OutboxBackoffPolicyTest {
 
     @Test
     void capsDelayAtThreeHundredSeconds() {
+        assertThat(policy.retryDelay(9, 0.8)).isEqualTo(Duration.ofMillis(204_800));
+        assertThat(policy.retryDelay(9, 1.2)).isEqualTo(Duration.ofSeconds(300));
         assertThat(policy.retryDelay(10, 0.8)).isEqualTo(Duration.ofSeconds(300));
         assertThat(policy.retryDelay(10, 1.2)).isEqualTo(Duration.ofSeconds(300));
     }
