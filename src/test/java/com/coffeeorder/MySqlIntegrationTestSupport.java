@@ -5,7 +5,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
-abstract class MySqlIntegrationTestSupport {
+public abstract class MySqlIntegrationTestSupport {
 
     static final String MYSQL_IMAGE = "mysql:8.0.42";
 
