@@ -12,6 +12,10 @@ public record IdempotencyResponseSnapshot(int responseStatus, String storedBody)
         }
         storedBody = CanonicalJson.normalize(storedBody);
         JsonNode body = CanonicalJson.read(storedBody);
+        if (!isSuccess(responseStatus) && !body.isObject()) {
+            throw new IllegalArgumentException(
+                    "deterministic error snapshot must be a JSON object");
+        }
         if (!isSuccess(responseStatus) && (body.has("timestamp") || body.has("traceId"))) {
             throw new IllegalArgumentException(
                     "deterministic error snapshot must not contain request metadata");

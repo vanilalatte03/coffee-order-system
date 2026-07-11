@@ -6,9 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
 import com.coffeeorder.domain.idempotency.entity.IdempotencyOperation;
+import com.coffeeorder.domain.idempotency.repository.IdempotencyRequestRepository;
 import com.coffeeorder.domain.point.service.PointWriteService;
 import com.coffeeorder.domain.user.service.UserNotFoundException;
 import com.coffeeorder.domain.user.service.ValidateUserService;
@@ -21,6 +24,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -38,10 +43,12 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
     @Autowired private ValidateUserService validateUserService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @MockitoSpyBean private IdempotencyRequestWriter idempotencyRequestWriter;
+    @MockitoSpyBean private IdempotencyRequestRepository idempotencyRequestRepository;
 
     @BeforeEach
     void resetData() {
         reset(idempotencyRequestWriter);
+        reset(idempotencyRequestRepository);
         jdbcTemplate.update("DELETE FROM idempotency_requests");
         jdbcTemplate.update("DELETE FROM point_transactions");
         jdbcTemplate.update("DELETE FROM orders");
@@ -214,6 +221,28 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(ledgerCount()).isZero();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"[]", "\"error\"", "42", "null"})
+    void 객체가_아닌_결정적_오류_payload는_업무와_PROCESSING을_롤백한다(String invalidBody) {
+        assertThatThrownBy(
+                        () ->
+                                executeCharge(
+                                        10,
+                                        "invalid-error-body",
+                                        CHARGE_100,
+                                        () -> {
+                                            pointWriteService.charge(10, 100);
+                                            return IdempotencyResponseSnapshot.deterministicError(
+                                                    409, invalidBody);
+                                        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be a JSON object");
+
+        assertThat(balanceOf(10)).isZero();
+        assertThat(ledgerCount()).isZero();
+        assertThat(idempotencyCount()).isZero();
+    }
+
     @Test
     void COMPLETED_snapshot_flush_실패는_업무와_PROCESSING을_모두_롤백한다() {
         doThrow(new DataIntegrityViolationException("forced completed snapshot flush failure"))
@@ -252,7 +281,16 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
     void 동시_선점은_DB_유니크_승자_한_건만_업무를_실행한다() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CyclicBarrier startBarrier = new CyclicBarrier(2);
+        CyclicBarrier processingFlushBarrier = new CyclicBarrier(2);
         AtomicInteger executions = new AtomicInteger();
+
+        org.mockito.Mockito.doAnswer(
+                        invocation -> {
+                            processingFlushBarrier.await(5, SECONDS);
+                            return invocation.callRealMethod();
+                        })
+                .when(idempotencyRequestWriter)
+                .flushProcessing(any());
 
         try {
             Future<IdempotencyExecutionResult> first =
@@ -291,6 +329,9 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
             assertThat(balanceOf(10)).isEqualTo(100);
             assertThat(ledgerCount()).isEqualTo(1);
             assertThat(idempotencyCount()).isEqualTo(1);
+            verify(idempotencyRequestRepository, times(3))
+                    .findByUserIdAndOperationAndIdempotencyKey(
+                            10, IdempotencyOperation.POINT_CHARGE, "concurrent-key");
         } finally {
             executor.shutdownNow();
         }
