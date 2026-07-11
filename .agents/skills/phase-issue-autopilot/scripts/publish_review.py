@@ -379,6 +379,13 @@ class GhClient:
     def post(self, endpoint: str, payload: Any) -> Any:
         return self._run(endpoint, method="POST", payload=payload)
 
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        return self._run(
+            "graphql",
+            method="POST",
+            payload={"query": query, "variables": variables},
+        )
+
     def delete(self, endpoint: str) -> None:
         self._run(endpoint, method="DELETE")
 
@@ -625,20 +632,76 @@ def _review_marker(review: dict[str, Any]) -> dict[str, str] | None:
     return match.groupdict() if match else None
 
 
-def _comments_signature(comments: list[Any]) -> list[tuple[str, int, str, str]]:
-    signature: list[tuple[str, int, str, str]] = []
-    for comment in comments:
+def _review_comments(client: GhClient, review: dict[str, Any]) -> list[dict[str, Any]]:
+    review_node_id = review.get("node_id")
+    if not isinstance(review_node_id, str) or not review_node_id:
+        raise IdempotencyError("기존 review node id가 없습니다.")
+    query = """
+    query($review: ID!, $cursor: String) {
+      node(id: $review) {
+        ... on PullRequestReview {
+          comments(first: 100, after: $cursor) {
+            nodes { body path line originalLine }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+    """
+    comments: list[dict[str, Any]] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    for _ in range(100):
+        response = client.graphql(query, {"review": review_node_id, "cursor": cursor})
+        connection = (((response or {}).get("data") or {}).get("node") or {}).get(
+            "comments"
+        )
+        if not isinstance(connection, dict):
+            raise IdempotencyError("review comments GraphQL 응답이 올바르지 않습니다.")
+        nodes = connection.get("nodes")
+        page_info = connection.get("pageInfo")
+        if not isinstance(nodes, list) or not isinstance(page_info, dict):
+            raise IdempotencyError("review comments page 형식이 올바르지 않습니다.")
+        if page_info.get("hasNextPage") and not nodes:
+            raise IdempotencyError("다음 review comments page가 있지만 현재 page가 비었습니다.")
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise IdempotencyError("review comment 응답이 객체가 아닙니다.")
+            comments.append(node)
+        if not page_info.get("hasNextPage"):
+            return comments
+        next_cursor = page_info.get("endCursor")
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
+            raise IdempotencyError("review comments pagination cursor가 올바르지 않습니다.")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    raise IdempotencyError("review comments pagination이 100 page를 초과했습니다.")
+
+
+def _verify_comments(actual: list[Any], expected: list[Any]) -> None:
+    if len(actual) != len(expected):
+        raise IdempotencyError("기존 marker review의 inline comments가 다릅니다.")
+    actual_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    for comment in actual:
         if not isinstance(comment, dict):
             raise IdempotencyError("review comment 응답이 객체가 아닙니다.")
-        signature.append(
-            (
-                str(comment.get("path") or ""),
-                int(comment.get("line") or 0),
-                str(comment.get("side") or ""),
-                str(comment.get("body") or ""),
-            )
+        identity = (str(comment.get("path") or ""), str(comment.get("body") or ""))
+        if identity in actual_by_identity:
+            raise IdempotencyError("기존 marker review comment가 중복되었습니다.")
+        actual_by_identity[identity] = comment
+    for comment in expected:
+        if not isinstance(comment, dict):
+            raise IdempotencyError("review comment payload가 객체가 아닙니다.")
+        identity = (str(comment.get("path") or ""), str(comment.get("body") or ""))
+        actual_comment = actual_by_identity.get(identity)
+        if actual_comment is None:
+            raise IdempotencyError("기존 marker review의 inline comments가 다릅니다.")
+        side = comment.get("side")
+        actual_line = (
+            actual_comment.get("line") if side == "RIGHT" else actual_comment.get("originalLine")
         )
-    return sorted(signature)
+        if actual_line != comment.get("line"):
+            raise IdempotencyError("기존 marker review의 inline comment anchor가 다릅니다.")
 
 
 def _verify_existing_review(
@@ -663,9 +726,8 @@ def _verify_existing_review(
     review_id = review.get("id")
     if not isinstance(review_id, int):
         raise IdempotencyError("기존 review id가 없습니다.")
-    actual = client.get_pages(f"repos/{repo}/pulls/{pr}/reviews/{review_id}/comments")
-    if _comments_signature(actual) != _comments_signature(payload["comments"]):
-        raise IdempotencyError("기존 marker review의 inline comments가 다릅니다.")
+    actual = _review_comments(client, review)
+    _verify_comments(actual, payload["comments"])
 
 
 def _find_existing(
