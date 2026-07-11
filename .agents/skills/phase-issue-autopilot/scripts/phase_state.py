@@ -24,8 +24,8 @@ MARKER_RE = re.compile(
     r"<!-- phase-step:v1 phase=(?P<phase>[a-z0-9][a-z0-9-]*) "
     r"step=(?P<step>\d{2}) doc=(?P<doc>[A-Za-z0-9_./-]+) -->"
 )
-TRACKED_BRANCH_RE = re.compile(r"(?m)^- branch: `(?P<value>[^`\r\n]+)`$")
-TRACKED_PR_RE = re.compile(r"(?m)^- PR: (?P<value>[^\r\n]+)$")
+TRACKED_BRANCH_RE = re.compile(r"(?m)^- branch: `(?P<value>[^`\r\n]+)`\r?$")
+TRACKED_PR_RE = re.compile(r"(?m)^- PR: (?P<value>[^\r\n]+)\r?$")
 PHASE_RE = re.compile(r"^phase-\d+$")
 STEP_DOC_RE = re.compile(
     r"^docs/phases/(?P<phase>phase-\d+)/step-(?P<step>\d{2})-[a-z0-9][a-z0-9-]*\.md$"

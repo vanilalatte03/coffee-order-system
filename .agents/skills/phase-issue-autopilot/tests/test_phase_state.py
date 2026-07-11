@@ -37,19 +37,21 @@ def issue(
     state: str = "OPEN",
     branch: str | None = None,
     pr: str = "미생성",
+    newline: str = "\n",
 ) -> dict[str, object]:
     tracked_branch = branch if branch is not None else spec.branch
+    body = (
+        f"{spec.marker}\n\n## 작업 추적\n\n"
+        f"- branch: `{tracked_branch}`\n"
+        f"- PR: {pr}\n"
+        "- blocker: 없음\n"
+    )
     return {
         "number": 7,
         "state": state,
         "title": spec.issue_title,
         "url": "https://github.com/owner/repo/issues/7",
-        "body": (
-            f"{spec.marker}\n\n## 작업 추적\n\n"
-            f"- branch: `{tracked_branch}`\n"
-            f"- PR: {pr}\n"
-            "- blocker: 없음\n"
-        ),
+        "body": body.replace("\n", newline),
     }
 
 
@@ -171,6 +173,19 @@ class InspectStateTests(unittest.TestCase):
 
         self.assertEqual([], state["blockers"])
         self.assertEqual("resume", state["next_action"])
+
+    def test_github_crlf_issue_body_preserves_tracking_links(self) -> None:
+        spec = issue_spec()
+        pr = pull_request(spec)
+        state = self.inspect(
+            issues=[issue(spec, pr=str(pr["url"]), newline="\r\n")],
+            prs=[pr],
+            branches=[linked_branch(spec)],
+        )
+
+        self.assertEqual([], state["blockers"])
+        self.assertEqual(spec.branch, state["tracked_branch"])
+        self.assertEqual(pr["url"], state["tracked_pr"])
 
     def test_wrong_base_closed_unmerged_and_unreachable_merge_have_exact_blockers(self) -> None:
         spec = issue_spec()
