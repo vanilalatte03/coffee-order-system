@@ -1,6 +1,20 @@
 spring:
   application:
     name: coffee-order-system
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true}
+    username: ${DB_USERNAME:coffee}
+    password: ${DB_PASSWORD:coffee}
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
 
 management:
   endpoints:
