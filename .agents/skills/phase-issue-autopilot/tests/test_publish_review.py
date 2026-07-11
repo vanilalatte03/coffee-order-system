@@ -82,6 +82,7 @@ class FakeGhClient:
         self.pr_reads = 0
         self.posts: list[tuple[str, dict[str, object]]] = []
         self.deletes: list[str] = []
+        self.graphql_calls: list[dict[str, object]] = []
         self.reviews: list[dict[str, object]] = []
         self.comments: dict[int, list[dict[str, object]]] = {}
         if existing_state is not None:
@@ -91,6 +92,7 @@ class FakeGhClient:
         review_id = 100 + len(self.reviews)
         review = {
             "id": review_id,
+            "node_id": f"REVIEW_NODE_{review_id}",
             "state": state,
             "commit_id": self.payload["commit_id"],
             "body": self.payload["body"],
@@ -139,6 +141,32 @@ class FakeGhClient:
                 raise publish_review.GitHubError("submit 응답 유실")
             return copy.deepcopy(review)
         raise AssertionError(f"예상하지 못한 POST: {endpoint}")
+
+    def graphql(self, query: str, variables: dict[str, object]) -> object:
+        del query
+        self.graphql_calls.append(copy.deepcopy(variables))
+        review_id = int(str(variables["review"]).removeprefix("REVIEW_NODE_"))
+        comments = []
+        for comment in self.comments[review_id]:
+            side = comment["side"]
+            comments.append(
+                {
+                    "body": comment["body"],
+                    "path": comment["path"],
+                    "line": comment["line"] if side == "RIGHT" else None,
+                    "originalLine": comment["line"] if side == "LEFT" else None,
+                }
+            )
+        return {
+            "data": {
+                "node": {
+                    "comments": {
+                        "nodes": comments,
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    }
+                }
+            }
+        }
 
     def delete(self, endpoint: str) -> None:
         self.deletes.append(endpoint)
@@ -194,6 +222,36 @@ class PublishStateMachineTests(unittest.TestCase):
         self.assertEqual("posted", result["action"])
         self.assertEqual(1, len(client.posts))
         self.assertTrue(client.posts[0][0].endswith("/events"))
+        self.assertEqual(3, len(client.graphql_calls))
+
+    def test_pending_review_verifies_right_and_left_lines_from_graphql(self) -> None:
+        findings = [
+            {
+                "finding_key": f"anchor-{side.lower()}",
+                "dimension": "correctness",
+                "severity": "minor",
+                "title": f"{side} anchor",
+                "tldr": "GraphQL line을 검증합니다.",
+                "good": "marker는 안정적입니다.",
+                "fix_markdown": "anchor를 유지하세요.",
+                "path": "src/example.py",
+                "line": 1,
+                "side": side,
+            }
+            for side in ("RIGHT", "LEFT")
+        ]
+        value = envelope(findings=findings)
+        client = FakeGhClient(
+            value,
+            existing_state="PENDING",
+            changed_files=1,
+            files=[{"filename": "src/example.py", "patch": "@@ -1 +1 @@\n-old\n+new"}],
+        )
+
+        result, _ = self.publish(client, value)
+
+        self.assertEqual("posted", result["action"])
+        self.assertEqual(3, len(client.graphql_calls))
 
     def test_lost_create_response_recovers_without_duplicate_post(self) -> None:
         value = envelope()
