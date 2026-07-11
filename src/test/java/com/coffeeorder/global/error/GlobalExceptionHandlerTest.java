@@ -20,6 +20,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -109,6 +110,14 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$..password").doesNotExist());
     }
 
+    @Test
+    void DB_락_timeout은_503과_재시도_헤더로_변환한다() throws Exception {
+        mockMvc.perform(get("/test-fixture/lock-timeout"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.code").value("CONCURRENCY_TIMEOUT"));
+    }
+
     @RestController
     @RequestMapping("/test-fixture")
     public static class FixtureController {
@@ -119,6 +128,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/failure")
         void fail() {
             throw new IllegalStateException("database password must never be exposed");
+        }
+
+        @GetMapping("/lock-timeout")
+        void lockTimeout() {
+            throw new CannotAcquireLockException("forced lock timeout");
         }
     }
 

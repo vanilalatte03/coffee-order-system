@@ -5,10 +5,13 @@ spring:
     url: ${DB_URL:jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true}
     username: ${DB_USERNAME:coffee}
     password: ${DB_PASSWORD:coffee}
+    hikari:
+      connection-init-sql: SET SESSION innodb_lock_wait_timeout = ${DB_LOCK_WAIT_TIMEOUT_SECONDS:1}
   flyway:
     enabled: true
   jackson:
     deserialization:
+      accept-float-as-int: false
       fail-on-unknown-properties: true
   jpa:
     hibernate:
