@@ -29,6 +29,7 @@ do { docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcoff
 $env:DB_URL = 'jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
 $env:DB_USERNAME = 'coffee'
 $env:DB_PASSWORD = 'coffee'
+$env:DATA_PLATFORM_BASE_URL = 'http://localhost:9090'
 .\gradlew.bat bootRun
 ```
 
@@ -40,6 +41,7 @@ until docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcof
 export DB_URL='jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
 export DB_USERNAME='coffee'
 export DB_PASSWORD='coffee'
+export DATA_PLATFORM_BASE_URL='http://localhost:9090'
 ./gradlew bootRun
 ```
 
@@ -70,6 +72,24 @@ docker rm coffee-order-mysql
 5. 브라우저에서 [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)를 열어 `{"status":"UP"}`을 확인합니다.
 
 Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
+
+### Phase 1 Mock HTTP 이벤트 수신자
+
+결제 주문이 커밋되면 애플리케이션은 `DATA_PLATFORM_BASE_URL`의
+`POST /api/v1/order-events`로 `X-Event-Id`와 JSON 이벤트를 비동기 전송합니다. 수신자는
+같은 `eventId`가 중복 도착할 수 있으므로 유니크 제약이나 동등한 멱등 처리를 적용해야 합니다.
+수신자 장애는 이미 커밋된 주문 응답을 변경하지 않으며 Outbox가 최대 11회의 자동 전송 시도 후
+실패 이벤트를 격리합니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `DATA_PLATFORM_BASE_URL` | `http://localhost:9090` | Mock HTTP 수신자 base URL |
+| `DATA_PLATFORM_CONNECT_TIMEOUT` | `500ms` | 연결 timeout |
+| `DATA_PLATFORM_READ_TIMEOUT` | `2s` | 응답 read timeout |
+| `OUTBOX_POLL_INTERVAL` | `1s` | 유실 방지 DB scan 주기 |
+| `OUTBOX_LEASE` | `30s` | 선점 lease |
+| `OUTBOX_WORKER_ID` | `coffee-order-system` | 다중 worker 관측 ID, 최대 100자 |
+| `OUTBOX_DELIVERY_ENABLED` | `true` | Outbox HTTP worker 활성화 여부 |
 
 ## 목표
 
