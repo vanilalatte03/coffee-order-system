@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coffee-order-system.local/schemas/phase-review-envelope-v2.json",
+  "title": "Phase Issue Autopilot Review Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "issue_number",
+    "pull_number",
+    "phase",
+    "step",
+    "attempt",
+    "base",
+    "head",
+    "verdict",
+    "summary",
+    "findings"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "issue_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pull_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "phase": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "step": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "base": {
+      "$ref": "#/$defs/gitSnapshot"
+    },
+    "head": {
+      "$ref": "#/$defs/gitSnapshot"
+    },
+    "verdict": {
+      "enum": [
+        "APPROVE",
+        "CHANGES_REQUESTED",
+        "BLOCKED"
+      ]
+    },
+    "summary": {
+      "$ref": "#/$defs/reviewSummary"
+    },
+    "findings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "properties": {
+        "base": {
+          "properties": {
+            "ref": {
+              "const": "develop"
+            }
+          }
+        },
+        "head": {
+          "properties": {
+            "ref": {
+              "pattern": "^codex/phase-[0-9]+-step-[0-9]{2}-[a-z0-9][a-z0-9-]*$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "findings": {
+            "contains": {
+              "properties": {
+                "severity": {
+                  "const": "critical"
+                }
+              },
+              "required": [
+                "severity"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verdict": {
+            "const": "BLOCKED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "findings": {
+            "allOf": [
+              {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "severity": {
+                        "const": "critical"
+                      }
+                    },
+                    "required": [
+                      "severity"
+                    ]
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "severity": {
+                      "const": "major"
+                    }
+                  },
+                  "required": [
+                    "severity"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verdict": {
+            "const": "CHANGES_REQUESTED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "findings": {
+            "not": {
+              "contains": {
+                "properties": {
+                  "severity": {
+                    "enum": [
+                      "critical",
+                      "major"
+                    ]
+                  }
+                },
+                "required": [
+                  "severity"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verdict": {
+            "const": "APPROVE"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonBlankText": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?=[\\s\\S]*\\S)(?![\\s\\S]*\\u0000)(?![\\s\\S]*<!-- phase-issue-autopilot-review:)(?![\\s\\S]*<!-- phase-issue-autopilot-finding:)[\\s\\S]+$"
+    },
+    "singleLineText": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/nonBlankText"
+        },
+        {
+          "pattern": "^[^\\r\\n]+$"
+        }
+      ]
+    },
+    "walkthroughText": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/nonBlankText"
+        },
+        {
+          "pattern": "^[^\\r\\n]+\\r?\\n[^\\r\\n]+(?:\\r?\\n[^\\r\\n]+)?$"
+        }
+      ]
+    },
+    "safeDiffPath": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/nonBlankText"
+        },
+        {
+          "pattern": "^(?!/)(?!\\.git/)(?!\\.\\.(?:/|$))(?![\\s\\S]*/\\.\\.(?:/|$))(?![\\s\\S]*\\\\)[\\s\\S]+$"
+        }
+      ]
+    },
+    "nonEmptyTextList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/singleLineText"
+      }
+    },
+    "reviewSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "walkthrough",
+        "strengths",
+        "next_actions"
+      ],
+      "properties": {
+        "walkthrough": {
+          "$ref": "#/$defs/walkthroughText"
+        },
+        "strengths": {
+          "$ref": "#/$defs/nonEmptyTextList"
+        },
+        "next_actions": {
+          "$ref": "#/$defs/nonEmptyTextList"
+        }
+      }
+    },
+    "gitSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "sha"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/nonBlankText"
+        },
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_key",
+        "dimension",
+        "severity",
+        "title",
+        "tldr",
+        "good",
+        "fix_markdown",
+        "path",
+        "line",
+        "side"
+      ],
+      "properties": {
+        "finding_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "dimension": {
+          "enum": [
+            "correctness",
+            "security",
+            "conventions",
+            "performance",
+            "test-coverage",
+            "architecture",
+            "cross-file-consistency",
+            "privacy",
+            "cpu-perf-patterns",
+            "behavioral-correctness"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "major",
+            "minor",
+            "nit"
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/singleLineText"
+        },
+        "tldr": {
+          "$ref": "#/$defs/singleLineText"
+        },
+        "good": {
+          "$ref": "#/$defs/singleLineText"
+        },
+        "fix_markdown": {
+          "$ref": "#/$defs/nonBlankText"
+        },
+        "path": {
+          "$ref": "#/$defs/safeDiffPath"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "side": {
+          "enum": [
+            "LEFT",
+            "RIGHT"
+          ]
+        }
+      }
+    }
+  }
+}
