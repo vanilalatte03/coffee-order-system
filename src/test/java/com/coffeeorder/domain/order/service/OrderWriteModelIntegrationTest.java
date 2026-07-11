@@ -146,6 +146,25 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
     }
 
     @Test
+    void 외부_transaction_실패는_주문_PAYMENT_Outbox와_지갑을_모두_롤백한다() {
+        OrderableMenuResult menu = validateOrderableMenuService.validate(2);
+
+        assertThatThrownBy(
+                        () ->
+                                transactionTemplate.executeWithoutResult(
+                                        status -> {
+                                            writeOrder(menu);
+                                            throw new RollbackTestException();
+                                        }))
+                .isInstanceOf(RollbackTestException.class);
+
+        assertThat(count("orders")).isZero();
+        assertThat(count("point_transactions")).isZero();
+        assertThat(count("outbox_events")).isZero();
+        assertThat(balanceOf(10)).isEqualTo(10000);
+    }
+
+    @Test
     void DB는_주문별_PAYMENT와_ORDER_PAID_중복을_각각_거절한다() {
         WorkflowResult result =
                 transactionTemplate.execute(
@@ -200,6 +219,8 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     private record WorkflowResult(
             PaidOrderResult order, long remainingBalance, RecordedOutboxEventResult outbox) {}
+
+    private static final class RollbackTestException extends RuntimeException {}
 
     @TestConfiguration
     static class FixedClockConfiguration {
