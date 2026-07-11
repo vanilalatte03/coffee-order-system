@@ -3,6 +3,7 @@ package com.coffeeorder.domain.idempotency.service;
 import com.coffeeorder.domain.idempotency.entity.IdempotencyOperation;
 import com.coffeeorder.domain.idempotency.entity.IdempotencyRequest;
 import com.coffeeorder.domain.idempotency.repository.IdempotencyRequestRepository;
+import com.coffeeorder.global.observability.OperationalMetrics;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -23,6 +24,7 @@ public class IdempotencyExecutor {
     private final IdempotencyRequestRepository idempotencyRequestRepository;
     private final IdempotencyRequestWriter idempotencyRequestWriter;
     private final Clock clock;
+    private final OperationalMetrics metrics;
     private final TransactionTemplate writeTransaction;
     private final TransactionTemplate readTransaction;
 
@@ -30,10 +32,12 @@ public class IdempotencyExecutor {
             IdempotencyRequestRepository idempotencyRequestRepository,
             IdempotencyRequestWriter idempotencyRequestWriter,
             Clock clock,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            OperationalMetrics metrics) {
         this.idempotencyRequestRepository = idempotencyRequestRepository;
         this.idempotencyRequestWriter = idempotencyRequestWriter;
         this.clock = clock;
+        this.metrics = metrics;
         this.writeTransaction = new TransactionTemplate(transactionManager);
         this.writeTransaction.setPropagationBehavior(
                 TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -56,7 +60,7 @@ public class IdempotencyExecutor {
         Optional<IdempotencyRequest> existing =
                 findInNewReadTransaction(userId, operation, idempotencyKey);
         if (existing.isPresent()) {
-            return replay(existing.get(), requestHash);
+            return replay(existing.get(), requestHash, operation);
         }
 
         precondition.run();
@@ -67,6 +71,12 @@ public class IdempotencyExecutor {
                             ignored ->
                                     executeInWriteTransaction(
                                             userId, operation, idempotencyKey, requestHash, work));
+            metrics.increment(
+                    "coffee.idempotency.requests",
+                    "operation",
+                    operation.name().toLowerCase(),
+                    "outcome",
+                    "first");
             return new IdempotencyExecutionResult(snapshot, false);
         } catch (DataIntegrityViolationException collisionOrConstraintFailure) {
             Optional<IdempotencyRequest> winner =
@@ -74,7 +84,7 @@ public class IdempotencyExecutor {
             if (winner.isEmpty()) {
                 throw collisionOrConstraintFailure;
             }
-            return replay(winner.get(), requestHash);
+            return replay(winner.get(), requestHash, operation);
         }
     }
 
@@ -103,9 +113,15 @@ public class IdempotencyExecutor {
                                 userId, operation, idempotencyKey));
     }
 
-    private static IdempotencyExecutionResult replay(
-            IdempotencyRequest request, String requestHash) {
+    private IdempotencyExecutionResult replay(
+            IdempotencyRequest request, String requestHash, IdempotencyOperation operation) {
         if (!request.hasRequestHash(requestHash)) {
+            metrics.increment(
+                    "coffee.idempotency.requests",
+                    "operation",
+                    operation.name().toLowerCase(),
+                    "outcome",
+                    "conflict");
             throw new IdempotencyKeyReusedException();
         }
         if (!request.isCompleted()) {
@@ -114,6 +130,12 @@ public class IdempotencyExecutor {
         IdempotencyResponseSnapshot snapshot =
                 IdempotencyResponseSnapshot.restored(
                         request.getResponseStatus(), request.getResponseBody());
+        metrics.increment(
+                "coffee.idempotency.requests",
+                "operation",
+                operation.name().toLowerCase(),
+                "outcome",
+                "replay");
         return new IdempotencyExecutionResult(snapshot, true);
     }
 

@@ -3,6 +3,7 @@ package com.coffeeorder.domain.outbox.service;
 import com.coffeeorder.domain.outbox.entity.OutboxStatus;
 import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository;
 import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository.LockedCandidate;
+import com.coffeeorder.global.observability.OperationalMetrics;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,10 +12,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.DoubleSupplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 public class OutboxDeliveryCoordinator {
+
+    private static final Logger log = LoggerFactory.getLogger(OutboxDeliveryCoordinator.class);
 
     private static final int MAX_ATTEMPTS = 11;
     private static final String ATTEMPT_LIMIT_ERROR =
@@ -27,6 +32,7 @@ public class OutboxDeliveryCoordinator {
     private final OutboxBackoffPolicy backoffPolicy;
     private final DoubleSupplier jitterFactor;
     private final TransactionTemplate transaction;
+    private final OperationalMetrics metrics;
 
     public OutboxDeliveryCoordinator(
             OutboxDeliveryRepository repository,
@@ -36,6 +42,26 @@ public class OutboxDeliveryCoordinator {
             OutboxBackoffPolicy backoffPolicy,
             DoubleSupplier jitterFactor,
             PlatformTransactionManager transactionManager) {
+        this(
+                repository,
+                publisher,
+                clock,
+                leaseDuration,
+                backoffPolicy,
+                jitterFactor,
+                transactionManager,
+                OperationalMetrics.fallback());
+    }
+
+    public OutboxDeliveryCoordinator(
+            OutboxDeliveryRepository repository,
+            OrderEventPublisher publisher,
+            Clock clock,
+            Duration leaseDuration,
+            OutboxBackoffPolicy backoffPolicy,
+            DoubleSupplier jitterFactor,
+            PlatformTransactionManager transactionManager,
+            OperationalMetrics metrics) {
         this.repository = Objects.requireNonNull(repository);
         this.publisher = Objects.requireNonNull(publisher);
         this.clock = Objects.requireNonNull(clock);
@@ -46,6 +72,7 @@ public class OutboxDeliveryCoordinator {
         this.backoffPolicy = Objects.requireNonNull(backoffPolicy);
         this.jitterFactor = Objects.requireNonNull(jitterFactor);
         this.transaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
+        this.metrics = Objects.requireNonNull(metrics);
     }
 
     public boolean dispatchNext(String workerId) {
@@ -60,6 +87,10 @@ public class OutboxDeliveryCoordinator {
             return false;
         }
         if (outcome.kind() == ClaimOutcome.Kind.QUARANTINED) {
+            metrics.increment("coffee.outbox.delivery.results", "result", "quarantine");
+            log.error(
+                    "outbox_quarantined eventId={} operation=ORDER_PAID resultCode=ATTEMPT_LIMIT",
+                    outcome.eventId());
             return true;
         }
 
@@ -73,6 +104,7 @@ public class OutboxDeliveryCoordinator {
         Instant completedAt = now();
         OrderEventPublishResult finalResult = result;
         transaction.executeWithoutResult(ignored -> applyResult(event, finalResult, completedAt));
+        recordDeliveryMetrics(event, result, completedAt);
         return true;
     }
 
@@ -110,7 +142,11 @@ public class OutboxDeliveryCoordinator {
                         leaseStartedAt));
         return ClaimOutcome.claimed(
                 new ClaimedOrderEvent(
-                        candidate.eventId(), candidate.payload(), attemptCount, claimToken));
+                        candidate.eventId(),
+                        candidate.payload(),
+                        attemptCount,
+                        claimToken,
+                        candidate.createdAt()));
     }
 
     private void applyResult(
@@ -158,6 +194,37 @@ public class OutboxDeliveryCoordinator {
         String message = exception.getMessage();
         return exception.getClass().getSimpleName()
                 + (message == null || message.isBlank() ? "" : ": " + message);
+    }
+
+    private void recordDeliveryMetrics(
+            ClaimedOrderEvent event, OrderEventPublishResult result, Instant completedAt) {
+        String resultCode = result.type().name().toLowerCase();
+        metrics.increment("coffee.outbox.delivery.results", "result", resultCode);
+        metrics.increment(
+                "coffee.outbox.delivery.attempts",
+                "kind",
+                event.attemptCount() == 1 ? "first" : "retry");
+        if (event.attemptCount() == 1 && !event.createdAt().equals(Instant.EPOCH)) {
+            Duration firstLatency = Duration.between(event.createdAt(), completedAt);
+            metrics.record(
+                    "coffee.outbox.delivery.first.latency",
+                    firstLatency.isNegative() ? Duration.ZERO : firstLatency,
+                    "result",
+                    resultCode);
+        }
+        if (result.type() == OrderEventPublishResult.Type.SUCCESS) {
+            log.info(
+                    "outbox_delivery_completed eventId={} attempt={} operation=ORDER_PAID resultCode={}",
+                    event.eventId(),
+                    event.attemptCount(),
+                    result.type());
+        } else {
+            log.warn(
+                    "outbox_delivery_failed eventId={} attempt={} operation=ORDER_PAID resultCode={}",
+                    event.eventId(),
+                    event.attemptCount(),
+                    result.type());
+        }
     }
 
     private record ClaimOutcome(Kind kind, Optional<ClaimedOrderEvent> event, String eventId) {

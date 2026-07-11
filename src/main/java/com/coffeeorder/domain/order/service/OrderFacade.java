@@ -16,13 +16,18 @@ import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventService;
 import com.coffeeorder.domain.point.service.PointPaymentPreparation;
 import com.coffeeorder.domain.point.service.PointWriteService;
 import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class OrderFacade {
+
+    private static final Logger log = LoggerFactory.getLogger(OrderFacade.class);
 
     private static final String MENU_NOT_FOUND_BODY =
             "{\"code\":\"MENU_NOT_FOUND\",\"message\":\"메뉴를 찾을 수 없습니다.\"}";
@@ -72,15 +77,19 @@ public class OrderFacade {
                         command.idempotencyKey(),
                         payload,
                         () -> validateUserService.validateExists(command.userId()),
-                        () -> executeOrder(command));
+                        () -> executeOrder(command, traceId));
         IdempotencyResponseSnapshot snapshot = execution.snapshot();
-        return new CreateOrderResult(
-                snapshot.responseStatus(),
-                snapshot.responseBody(responseTimestamp, traceId),
+        String responseBody = snapshot.responseBody(responseTimestamp, traceId);
+        log.info(
+                "order_request_completed traceId={} userId={} operation=ORDER_CREATE resultCode={} replayed={}",
+                traceId,
+                command.userId(),
+                RequestObservability.resultCode(snapshot.responseStatus(), responseBody),
                 execution.replayed());
+        return new CreateOrderResult(snapshot.responseStatus(), responseBody, execution.replayed());
     }
 
-    private IdempotencyResponseSnapshot executeOrder(CreateOrderCommand command) {
+    private IdempotencyResponseSnapshot executeOrder(CreateOrderCommand command, String traceId) {
         OrderableMenuResult menu;
         try {
             menu = validateOrderableMenuService.validate(command.menuId());
@@ -110,6 +119,11 @@ public class OrderFacade {
                         order.menuId(),
                         order.paymentAmount(),
                         order.paidAt()));
+        log.info(
+                "order_paid traceId={} userId={} orderId={} operation=ORDER_CREATE resultCode=SUCCESS",
+                traceId,
+                order.userId(),
+                order.orderId());
 
         CreateOrderResponse response =
                 new CreateOrderResponse(

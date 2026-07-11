@@ -5,6 +5,7 @@ import com.coffeeorder.domain.outbox.service.OrderEventPublisher;
 import com.coffeeorder.domain.outbox.service.OutboxBackoffPolicy;
 import com.coffeeorder.domain.outbox.service.OutboxDeliveryCoordinator;
 import com.coffeeorder.domain.outbox.service.OutboxDeliveryWorker;
+import com.coffeeorder.global.observability.OperationalMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.util.concurrent.Executor;
@@ -40,7 +41,8 @@ public class OutboxDeliveryConfiguration {
             OrderEventPublisher publisher,
             Clock clock,
             OutboxDeliveryProperties properties,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            OperationalMetrics metrics) {
         return new OutboxDeliveryCoordinator(
                 repository,
                 publisher,
@@ -48,7 +50,8 @@ public class OutboxDeliveryConfiguration {
                 properties.lease(),
                 new OutboxBackoffPolicy(),
                 () -> ThreadLocalRandom.current().nextDouble(0.8, 1.2),
-                transactionManager);
+                transactionManager,
+                metrics);
     }
 
     @Bean

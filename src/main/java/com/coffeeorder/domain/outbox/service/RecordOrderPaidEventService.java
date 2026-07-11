@@ -2,12 +2,15 @@ package com.coffeeorder.domain.outbox.service;
 
 import com.coffeeorder.domain.outbox.entity.OutboxEvent;
 import com.coffeeorder.domain.outbox.repository.OutboxEventRepository;
+import com.coffeeorder.global.observability.TraceIdFilter;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -15,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class RecordOrderPaidEventService {
+
+    private static final Logger log = LoggerFactory.getLogger(RecordOrderPaidEventService.class);
 
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
@@ -49,6 +54,12 @@ public class RecordOrderPaidEventService {
                         OutboxEvent.orderPaid(
                                 eventId, command.orderId(), serialize(payload), occurredAt));
         applicationEventPublisher.publishEvent(new OrderEventRecorded(eventId));
+        log.info(
+                "outbox_event_recorded traceId={} userId={} orderId={} eventId={} operation=ORDER_PAID resultCode=PENDING",
+                TraceIdFilter.currentTraceId(),
+                command.userId(),
+                command.orderId(),
+                eventId);
         return new RecordedOutboxEventResult(
                 event.getEventId(),
                 event.getPayload(),

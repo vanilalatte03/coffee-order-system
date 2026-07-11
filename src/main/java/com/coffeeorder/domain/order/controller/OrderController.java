@@ -6,6 +6,7 @@ import com.coffeeorder.domain.order.dto.CreateOrderRequest;
 import com.coffeeorder.domain.order.service.CreateOrderCommand;
 import com.coffeeorder.domain.order.service.CreateOrderResult;
 import com.coffeeorder.domain.order.service.OrderFacade;
+import com.coffeeorder.global.observability.RequestObservability;
 import com.coffeeorder.global.observability.TraceIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -43,12 +44,16 @@ public class OrderController {
             @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateOrderRequest request,
             HttpServletRequest servletRequest) {
+        RequestObservability.operation(servletRequest, "ORDER_CREATE");
+        RequestObservability.user(servletRequest, request.userId());
         validateKey(idempotencyKey);
         CreateOrderResult result =
                 orderFacade.create(
                         new CreateOrderCommand(request.userId(), request.menuId(), idempotencyKey),
                         clock.instant(),
                         TraceIdFilter.getTraceId(servletRequest));
+        RequestObservability.resultFromResponse(
+                servletRequest, result.status(), result.responseBody());
         return ResponseEntity.status(result.status())
                 .contentType(JSON_UTF8)
                 .header("Idempotency-Replayed", Boolean.toString(result.replayed()))

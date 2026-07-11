@@ -8,13 +8,18 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyResponseSnapshot;
 import com.coffeeorder.domain.point.dto.ChargePointsResponse;
 import com.coffeeorder.domain.point.entity.PointBalanceOverflowException;
 import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ChargePointsService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChargePointsService.class);
 
     private static final String OVERFLOW_BODY =
             "{\"code\":\"POINT_BALANCE_OVERFLOW\",\"message\":\"포인트 잔액이 범위를 초과합니다.\"}";
@@ -53,10 +58,15 @@ public class ChargePointsService {
                         () -> validateUserService.validateExists(command.userId()),
                         () -> executeCharge(command));
         IdempotencyResponseSnapshot snapshot = execution.snapshot();
-        return new ChargePointsResult(
-                snapshot.responseStatus(),
-                snapshot.responseBody(responseTimestamp, traceId),
+        String responseBody = snapshot.responseBody(responseTimestamp, traceId);
+        log.info(
+                "point_charge_completed traceId={} userId={} operation=POINT_CHARGE resultCode={} replayed={}",
+                traceId,
+                command.userId(),
+                RequestObservability.resultCode(snapshot.responseStatus(), responseBody),
                 execution.replayed());
+        return new ChargePointsResult(
+                snapshot.responseStatus(), responseBody, execution.replayed());
     }
 
     private IdempotencyResponseSnapshot executeCharge(ChargePointsCommand command) {
