@@ -3,21 +3,21 @@ package com.coffeeorder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
 abstract class MySqlIntegrationTestSupport {
 
     static final String MYSQL_IMAGE = "mysql:8.0.42";
 
-    @Container
     static final MySQLContainer<?> mysql =
             new MySQLContainer<>(DockerImageName.parse(MYSQL_IMAGE))
                     .withDatabaseName("coffee_order")
                     .withUsername("coffee")
                     .withPassword("coffee");
+
+    static {
+        mysql.start();
+    }
 
     @DynamicPropertySource
     static void configureMySql(DynamicPropertyRegistry registry) {
