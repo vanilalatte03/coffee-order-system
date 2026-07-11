@@ -101,7 +101,8 @@ public class OrderFacade {
                         new CreatePaidOrderCommand(
                                 command.userId(), menu.menuId(), menu.name(), menu.price()));
         long remainingBalance =
-                pointWriteService.completePayment(payment.paymentLock(), order.orderId());
+                pointWriteService.completePayment(
+                        payment.paymentLock(), order.userId(), order.orderId());
         recordOrderPaidEventService.record(
                 new RecordOrderPaidEventCommand(
                         order.orderId(),

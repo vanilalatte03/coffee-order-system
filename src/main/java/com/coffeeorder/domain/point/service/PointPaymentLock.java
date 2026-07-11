@@ -13,13 +13,24 @@ public final class PointPaymentLock {
         this.amount = amount;
     }
 
+    long userId() {
+        return wallet.getUserId();
+    }
+
+    PointWallet wallet() {
+        return wallet;
+    }
+
     long amount() {
         return amount;
     }
 
-    PointWallet consume() {
+    PointWallet consume(long expectedUserId) {
         if (consumed) {
             throw new IllegalStateException("payment lock is already consumed");
+        }
+        if (userId() != expectedUserId) {
+            throw new IllegalArgumentException("payment lock belongs to another user");
         }
         consumed = true;
         return wallet;
