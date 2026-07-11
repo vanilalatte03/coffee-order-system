@@ -24,15 +24,17 @@ public class OutboxDeliveryRepository {
     }
 
     public ClaimOutcome claimNext(String workerId, Instant now, Instant lockedUntil) {
-        List<Candidate> candidates = pendingCandidate(now);
-        if (candidates.isEmpty()) {
-            candidates = processingCandidate(now);
+        Candidate candidate = null;
+        for (CandidateId candidateId : candidateIds(now)) {
+            List<Candidate> locked = lockCandidate(candidateId, now);
+            if (!locked.isEmpty()) {
+                candidate = locked.getFirst();
+                break;
+            }
         }
-        if (candidates.isEmpty()) {
+        if (candidate == null) {
             return ClaimOutcome.none();
         }
-
-        Candidate candidate = candidates.getFirst();
         if (candidate.status().equals("PROCESSING") && candidate.attemptCount() == MAX_ATTEMPTS) {
             jdbcTemplate.update(
                     """
@@ -67,31 +69,51 @@ public class OutboxDeliveryRepository {
                         candidate.eventId(), candidate.payload(), nextAttempt, claimToken));
     }
 
-    private List<Candidate> pendingCandidate(Instant now) {
+    private List<CandidateId> candidateIds(Instant now) {
         return jdbcTemplate.query(
                 """
-                SELECT event_id, payload, status, attempt_count
-                FROM outbox_events
-                WHERE status = 'PENDING' AND attempt_count < 11 AND next_attempt_at <= ?
-                ORDER BY next_attempt_at, created_at
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
+                SELECT candidate.event_id, candidate.status
+                FROM (
+                    SELECT event_id, status, next_attempt_at AS eligible_at, created_at
+                    FROM outbox_events
+                    WHERE status = 'PENDING' AND attempt_count < 11 AND next_attempt_at <= ?
+                    UNION ALL
+                    SELECT event_id, status, locked_until AS eligible_at, created_at
+                    FROM outbox_events
+                    WHERE status = 'PROCESSING' AND locked_until < ?
+                ) candidate
+                ORDER BY candidate.eligible_at, candidate.created_at, candidate.event_id
                 """,
-                (resultSet, rowNum) -> candidate(resultSet),
+                (resultSet, rowNum) ->
+                        new CandidateId(
+                                resultSet.getString("event_id"), resultSet.getString("status")),
+                Timestamp.from(now),
                 Timestamp.from(now));
     }
 
-    private List<Candidate> processingCandidate(Instant now) {
+    private List<Candidate> lockCandidate(CandidateId candidateId, Instant now) {
+        if (candidateId.status().equals("PENDING")) {
+            return jdbcTemplate.query(
+                    """
+                    SELECT event_id, payload, status, attempt_count
+                    FROM outbox_events
+                    WHERE event_id = ? AND status = 'PENDING'
+                        AND attempt_count < 11 AND next_attempt_at <= ?
+                    FOR UPDATE SKIP LOCKED
+                    """,
+                    (resultSet, rowNum) -> candidate(resultSet),
+                    candidateId.eventId(),
+                    Timestamp.from(now));
+        }
         return jdbcTemplate.query(
                 """
                 SELECT event_id, payload, status, attempt_count
                 FROM outbox_events
-                WHERE status = 'PROCESSING' AND locked_until < ?
-                ORDER BY locked_until, created_at
-                LIMIT 1
+                WHERE event_id = ? AND status = 'PROCESSING' AND locked_until < ?
                 FOR UPDATE SKIP LOCKED
                 """,
                 (resultSet, rowNum) -> candidate(resultSet),
+                candidateId.eventId(),
                 Timestamp.from(now));
     }
 
@@ -169,6 +191,8 @@ public class OutboxDeliveryRepository {
     }
 
     private record Candidate(String eventId, String payload, String status, int attemptCount) {}
+
+    private record CandidateId(String eventId, String status) {}
 
     public record ClaimOutcome(Kind kind, Optional<ClaimedOrderEvent> event, String eventId) {
 

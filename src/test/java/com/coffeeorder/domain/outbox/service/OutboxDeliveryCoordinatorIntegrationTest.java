@@ -90,6 +90,34 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
     }
 
     @Test
+    void olderExpiredProcessingIsClaimedBeforeReadyPending() {
+        String readyPending = insertPending(NOW, 0);
+        String olderExpired = insertProcessing(NOW.minusSeconds(1), 3, "old-token");
+        List<ClaimedOrderEvent> calls = new ArrayList<>();
+        OutboxDeliveryCoordinator coordinator =
+                coordinator(
+                        NOW,
+                        event -> {
+                            calls.add(event);
+                            return OrderEventPublishResult.success();
+                        });
+
+        assertThat(coordinator.dispatchNext("worker-fair")).isTrue();
+
+        assertThat(calls)
+                .singleElement()
+                .satisfies(
+                        event -> {
+                            assertThat(event.eventId()).isEqualTo(olderExpired);
+                            assertThat(event.attemptCount()).isEqualTo(4);
+                            assertThat(event.claimToken()).isNotEqualTo("old-token");
+                        });
+        assertThat(status(olderExpired)).isEqualTo("PUBLISHED");
+        assertThat(status(readyPending)).isEqualTo("PENDING");
+        assertThat(attemptCount(readyPending)).isZero();
+    }
+
+    @Test
     void expiredEleventhAttemptIsQuarantinedWithoutCallingPublisher() {
         String eventId = insertProcessing(NOW.minusSeconds(1), 11, "last-token");
         AtomicInteger calls = new AtomicInteger();
