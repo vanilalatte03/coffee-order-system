@@ -31,5 +31,11 @@ class OutboxBackoffPolicyTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> policy.retryDelay(1, 1.21))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> policy.retryDelay(1, Double.NaN))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> policy.retryDelay(1, Double.POSITIVE_INFINITY))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> policy.retryDelay(1, Double.NEGATIVE_INFINITY))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
 import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository;
+import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository.LockedCandidate;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -24,6 +27,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSupport {
@@ -143,18 +147,28 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
     void publisherRunsWithoutTransactionAndSuccessClearsClaim() {
         String eventId = insertPending(NOW, 0);
         AtomicBoolean transactionActive = new AtomicBoolean(true);
+        AtomicBoolean claimVisible = new AtomicBoolean(false);
         OutboxDeliveryCoordinator coordinator =
                 coordinator(
                         NOW,
                         event -> {
                             transactionActive.set(
                                     TransactionSynchronizationManager.isActualTransactionActive());
+                            Map<String, Object> claimed = claimRow(eventId);
+                            claimVisible.set(
+                                    claimed.get("status").equals("PROCESSING")
+                                            && claimed.get("attempt_count").equals(1)
+                                            && claimed.get("claim_token").equals(event.claimToken())
+                                            && claimed.get("locked_by").equals("worker-d")
+                                            && nullableTimestamp(eventId, "locked_until")
+                                                    .equals(Timestamp.from(NOW.plusSeconds(30))));
                             return OrderEventPublishResult.success();
                         });
 
         coordinator.dispatchNext("worker-d");
 
         assertThat(transactionActive).isFalse();
+        assertThat(claimVisible).isTrue();
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
         assertThat(nullableTimestamp(eventId, "published_at")).isEqualTo(Timestamp.from(NOW));
         assertThat(nullableString(eventId, "claim_token")).isNull();
@@ -208,16 +222,153 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
     }
 
     @Test
-    void staleTokenCannotOverwriteNewClaimResult() {
+    void staleTokenCannotOverwriteNewClaimWhileItIsProcessing() {
         String eventId = insertProcessing(NOW.minusSeconds(1), 1, "stale-token");
+        AtomicBoolean staleResultsRejected = new AtomicBoolean(false);
         OutboxDeliveryCoordinator coordinator =
-                coordinator(NOW, event -> OrderEventPublishResult.success());
+                coordinator(
+                        NOW,
+                        event -> {
+                            assertThat(status(eventId)).isEqualTo("PROCESSING");
+                            assertThat(nullableString(eventId, "claim_token"))
+                                    .isEqualTo(event.claimToken())
+                                    .isNotEqualTo("stale-token");
+                            assertThat(
+                                            repository.markPublished(
+                                                    eventId, "stale-token", NOW.plusSeconds(1)))
+                                    .isZero();
+                            assertThat(
+                                            repository.markPending(
+                                                    eventId,
+                                                    "stale-token",
+                                                    NOW.plusSeconds(2),
+                                                    NOW,
+                                                    "late retry"))
+                                    .isZero();
+                            assertThat(
+                                            repository.markFailedByClaimToken(
+                                                    eventId, "stale-token", NOW, "late failure"))
+                                    .isZero();
+                            assertThat(status(eventId)).isEqualTo("PROCESSING");
+                            assertThat(nullableString(eventId, "claim_token"))
+                                    .isEqualTo(event.claimToken());
+                            staleResultsRejected.set(true);
+                            return OrderEventPublishResult.success();
+                        });
         coordinator.dispatchNext("worker-g");
-        assertThat(repository.markPublished(eventId, "stale-token", NOW.plusSeconds(1))).isZero();
-        assertThat(repository.markPending(eventId, "stale-token", NOW.plusSeconds(2), NOW, "late"))
-                .isZero();
-        assertThat(repository.markFailedByClaimToken(eventId, "stale-token", NOW, "late")).isZero();
+        assertThat(staleResultsRejected).isTrue();
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void leaseStartsAfterCandidateLockIsAcquired() {
+        String eventId = insertPending(NOW, 0);
+        MutableClock clock = new MutableClock(NOW);
+        AtomicBoolean leaseUsesPostLockTime = new AtomicBoolean(false);
+        OutboxDeliveryRepository advancingRepository =
+                new OutboxDeliveryRepository(jdbcTemplate) {
+                    @Override
+                    public Optional<LockedCandidate> lockNextCandidate(
+                            Instant eligibilityAt, int maxAttempts) {
+                        Optional<LockedCandidate> candidate =
+                                super.lockNextCandidate(eligibilityAt, maxAttempts);
+                        clock.set(NOW.plusSeconds(20));
+                        return candidate;
+                    }
+                };
+        OutboxDeliveryCoordinator coordinator =
+                coordinator(
+                        advancingRepository,
+                        clock,
+                        event -> {
+                            leaseUsesPostLockTime.set(
+                                    nullableTimestamp(eventId, "locked_until")
+                                            .equals(Timestamp.from(NOW.plusSeconds(50))));
+                            return OrderEventPublishResult.success();
+                        });
+
+        coordinator.dispatchNext("worker-after-lock");
+
+        assertThat(leaseUsesPostLockTime).isTrue();
+        assertThat(nullableTimestamp(eventId, "published_at"))
+                .isEqualTo(Timestamp.from(NOW.plusSeconds(20)));
+        assertThat(timestamp(eventId, "updated_at")).isEqualTo(Timestamp.from(NOW.plusSeconds(20)));
+    }
+
+    @Test
+    void nanosecondClockValuesAreNormalizedToDatabaseMicroseconds() {
+        Instant nanosecondNow = Instant.parse("2026-07-11T10:00:00.123456789Z");
+        Instant normalizedNow = Instant.parse("2026-07-11T10:00:00.123456Z");
+        String eventId = insertPending(normalizedNow, 0);
+        AtomicBoolean normalizedClaimVisible = new AtomicBoolean(false);
+        OutboxDeliveryCoordinator coordinator =
+                coordinator(
+                        nanosecondNow,
+                        event -> {
+                            normalizedClaimVisible.set(
+                                    nullableTimestamp(eventId, "locked_until")
+                                            .equals(Timestamp.from(normalizedNow.plusSeconds(30))));
+                            return OrderEventPublishResult.success();
+                        });
+
+        coordinator.dispatchNext("worker-nanos");
+
+        assertThat(normalizedClaimVisible).isTrue();
+        assertThat(nullableTimestamp(eventId, "published_at"))
+                .isEqualTo(Timestamp.from(normalizedNow));
+
+        String retryableEventId = insertPending(normalizedNow, 0);
+        OutboxDeliveryCoordinator retryableCoordinator =
+                coordinator(
+                        nanosecondNow,
+                        event -> OrderEventPublishResult.retryableFailure("temporary"));
+
+        retryableCoordinator.dispatchNext("worker-nanos-retry");
+
+        assertThat(timestamp(retryableEventId, "next_attempt_at"))
+                .isEqualTo(Timestamp.from(normalizedNow.plusSeconds(1)));
+    }
+
+    @Test
+    void skipLockedSelectsSecondCandidateWhileFirstRowLockIsHeld() throws Exception {
+        String firstId = insertPending(NOW.minusSeconds(1), 0);
+        String secondId = insertPending(NOW, 0);
+        CountDownLatch rowLocked = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<?> lockHolder =
+                    executor.submit(
+                            () ->
+                                    transaction.executeWithoutResult(
+                                            ignored -> {
+                                                jdbcTemplate.queryForObject(
+                                                        "SELECT event_id FROM outbox_events WHERE event_id = ? FOR UPDATE",
+                                                        String.class,
+                                                        firstId);
+                                                rowLocked.countDown();
+                                                await(releaseLock);
+                                            }));
+            assertThat(rowLocked.await(5, TimeUnit.SECONDS)).isTrue();
+            List<String> published = new ArrayList<>();
+            Future<Boolean> dispatcher =
+                    executor.submit(
+                            () ->
+                                    coordinator(
+                                                    NOW,
+                                                    event -> {
+                                                        published.add(event.eventId());
+                                                        return OrderEventPublishResult.success();
+                                                    })
+                                            .dispatchNext("skip-locked-worker"));
+
+            assertThat(dispatcher.get(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(published).containsExactly(secondId);
+            assertThat(status(firstId)).isEqualTo("PENDING");
+            releaseLock.countDown();
+            lockHolder.get(5, TimeUnit.SECONDS);
+        }
     }
 
     @Test
@@ -281,8 +432,15 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
 
     private OutboxDeliveryCoordinator coordinator(
             MutableClock clock, OrderEventPublisher publisher) {
+        return coordinator(repository, clock, publisher);
+    }
+
+    private OutboxDeliveryCoordinator coordinator(
+            OutboxDeliveryRepository deliveryRepository,
+            MutableClock clock,
+            OrderEventPublisher publisher) {
         return new OutboxDeliveryCoordinator(
-                repository,
+                deliveryRepository,
                 publisher,
                 clock,
                 Duration.ofSeconds(30),
@@ -352,6 +510,15 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         return jdbcTemplate.queryForObject(
                 "SELECT " + column + " FROM outbox_events WHERE event_id = ?",
                 (resultSet, rowNum) -> resultSet.getString(1),
+                eventId);
+    }
+
+    private Map<String, Object> claimRow(String eventId) {
+        return jdbcTemplate.queryForMap(
+                """
+                SELECT status, attempt_count, claim_token, locked_by, locked_until
+                FROM outbox_events WHERE event_id = ?
+                """,
                 eventId);
     }
 

@@ -11,7 +11,7 @@ public final class OutboxBackoffPolicy {
         if (attemptCount < 1 || attemptCount > 10) {
             throw new IllegalArgumentException("retry attempt count must be between 1 and 10");
         }
-        if (jitterFactor < 0.8 || jitterFactor > 1.2) {
+        if (!Double.isFinite(jitterFactor) || jitterFactor < 0.8 || jitterFactor > 1.2) {
             throw new IllegalArgumentException("jitter factor must be between 0.8 and 1.2");
         }
         long baseSeconds = 1L << (attemptCount - 1);

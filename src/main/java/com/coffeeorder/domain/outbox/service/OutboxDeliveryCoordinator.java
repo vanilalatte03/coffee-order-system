@@ -52,10 +52,10 @@ public class OutboxDeliveryCoordinator {
         if (workerId == null || workerId.isBlank() || workerId.length() > 100) {
             throw new IllegalArgumentException("worker id must be between 1 and 100 characters");
         }
-        Instant claimedAt = now();
+        Instant eligibilityAt = now();
         ClaimOutcome outcome =
                 Objects.requireNonNull(
-                        transaction.execute(ignored -> claimNext(workerId, claimedAt)));
+                        transaction.execute(ignored -> claimNext(workerId, eligibilityAt)));
         if (outcome.kind() == ClaimOutcome.Kind.NONE) {
             return false;
         }
@@ -76,20 +76,22 @@ public class OutboxDeliveryCoordinator {
         return true;
     }
 
-    private ClaimOutcome claimNext(String workerId, Instant claimedAt) {
-        Optional<LockedCandidate> locked = repository.lockNextCandidate(claimedAt, MAX_ATTEMPTS);
+    private ClaimOutcome claimNext(String workerId, Instant eligibilityAt) {
+        Optional<LockedCandidate> locked =
+                repository.lockNextCandidate(eligibilityAt, MAX_ATTEMPTS);
         if (locked.isEmpty()) {
             return ClaimOutcome.none();
         }
 
         LockedCandidate candidate = locked.orElseThrow();
+        Instant leaseStartedAt = now();
         if (candidate.status() == OutboxStatus.PROCESSING
                 && candidate.attemptCount() == MAX_ATTEMPTS) {
             requireSingleUpdate(
                     repository.markFailedByAttemptCount(
                             candidate.eventId(),
                             candidate.attemptCount(),
-                            claimedAt,
+                            leaseStartedAt,
                             ATTEMPT_LIMIT_ERROR));
             return ClaimOutcome.quarantined(candidate.eventId());
         }
@@ -104,8 +106,8 @@ public class OutboxDeliveryCoordinator {
                         attemptCount,
                         claimToken,
                         workerId,
-                        normalize(claimedAt.plus(leaseDuration)),
-                        claimedAt));
+                        normalize(leaseStartedAt.plus(leaseDuration)),
+                        leaseStartedAt));
         return ClaimOutcome.claimed(
                 new ClaimedOrderEvent(
                         candidate.eventId(), candidate.payload(), attemptCount, claimToken));
