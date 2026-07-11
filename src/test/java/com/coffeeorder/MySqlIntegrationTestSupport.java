@@ -24,6 +24,7 @@ public abstract class MySqlIntegrationTestSupport {
         registry.add("spring.datasource.url", MySqlIntegrationTestSupport::jdbcUrl);
         registry.add("spring.datasource.username", mysql::getUsername);
         registry.add("spring.datasource.password", mysql::getPassword);
+        registry.add("outbox.delivery.enabled", () -> "false");
     }
 
     private static String jdbcUrl() {

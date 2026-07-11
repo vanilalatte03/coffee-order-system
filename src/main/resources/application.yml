@@ -27,3 +27,14 @@ management:
     web:
       exposure:
         include: health,info
+
+outbox:
+  delivery:
+    enabled: ${OUTBOX_DELIVERY_ENABLED:true}
+    base-url: ${DATA_PLATFORM_BASE_URL:http://localhost:9090}
+    connect-timeout: ${DATA_PLATFORM_CONNECT_TIMEOUT:500ms}
+    read-timeout: ${DATA_PLATFORM_READ_TIMEOUT:2s}
+    poll-interval: ${OUTBOX_POLL_INTERVAL:1s}
+    lease: ${OUTBOX_LEASE:30s}
+    worker-id: ${OUTBOX_WORKER_ID:${spring.application.name}}
+    after-commit-wakeup-enabled: ${OUTBOX_AFTER_COMMIT_WAKEUP_ENABLED:true}

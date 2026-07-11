@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,11 +18,15 @@ public class RecordOrderPaidEventService {
 
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     public RecordOrderPaidEventService(
-            OutboxEventRepository outboxEventRepository, ObjectMapper objectMapper) {
+            OutboxEventRepository outboxEventRepository,
+            ObjectMapper objectMapper,
+            ApplicationEventPublisher applicationEventPublisher) {
         this.outboxEventRepository = outboxEventRepository;
         this.objectMapper = objectMapper;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @Transactional(propagation = Propagation.REQUIRED)
@@ -43,6 +48,7 @@ public class RecordOrderPaidEventService {
                 outboxEventRepository.save(
                         OutboxEvent.orderPaid(
                                 eventId, command.orderId(), serialize(payload), occurredAt));
+        applicationEventPublisher.publishEvent(new OrderEventRecorded(eventId));
         return new RecordedOutboxEventResult(
                 event.getEventId(),
                 event.getPayload(),
