@@ -9,7 +9,7 @@ public abstract class MySqlIntegrationTestSupport {
 
     static final String MYSQL_IMAGE = "mysql:8.0.42";
 
-    static final MySQLContainer<?> mysql =
+    protected static final MySQLContainer<?> mysql =
             new MySQLContainer<>(DockerImageName.parse(MYSQL_IMAGE))
                     .withDatabaseName("coffee_order")
                     .withUsername("coffee")
