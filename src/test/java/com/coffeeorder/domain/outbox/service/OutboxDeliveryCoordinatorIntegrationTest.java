@@ -213,11 +213,10 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         OutboxDeliveryCoordinator coordinator =
                 coordinator(NOW, event -> OrderEventPublishResult.success());
         coordinator.dispatchNext("worker-g");
-        ClaimedOrderEvent stale = new ClaimedOrderEvent(eventId, "{}", 1, "stale-token");
-
-        assertThat(repository.markPublished(stale, NOW.plusSeconds(1))).isZero();
-        assertThat(repository.markPending(stale, NOW.plusSeconds(2), NOW, "late")).isZero();
-        assertThat(repository.markFailed(stale, NOW, "late")).isZero();
+        assertThat(repository.markPublished(eventId, "stale-token", NOW.plusSeconds(1))).isZero();
+        assertThat(repository.markPending(eventId, "stale-token", NOW.plusSeconds(2), NOW, "late"))
+                .isZero();
+        assertThat(repository.markFailedByClaimToken(eventId, "stale-token", NOW, "late")).isZero();
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
     }
 

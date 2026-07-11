@@ -52,9 +52,8 @@ class ResetFailedOutboxServiceIntegrationTest extends MySqlIntegrationTestSuppor
                 .containsEntry("claim_token", null)
                 .containsEntry("locked_by", null)
                 .containsEntry("locked_until", null);
-        ClaimedOrderEvent stale = new ClaimedOrderEvent(failed, "{}", 11, "old-token");
-        assertThat(repository.markPublished(stale, NOW)).isZero();
-        assertThat(repository.markFailed(stale, NOW, "late")).isZero();
+        assertThat(repository.markPublished(failed, "old-token", NOW)).isZero();
+        assertThat(repository.markFailedByClaimToken(failed, "old-token", NOW, "late")).isZero();
         assertThat(row(failed)).containsEntry("status", "PENDING");
     }
 

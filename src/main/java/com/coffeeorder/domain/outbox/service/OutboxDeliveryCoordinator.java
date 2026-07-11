@@ -1,17 +1,24 @@
 package com.coffeeorder.domain.outbox.service;
 
+import com.coffeeorder.domain.outbox.entity.OutboxStatus;
 import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository;
-import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository.ClaimOutcome;
+import com.coffeeorder.domain.outbox.repository.OutboxDeliveryRepository.LockedCandidate;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.function.DoubleSupplier;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 public class OutboxDeliveryCoordinator {
+
+    private static final int MAX_ATTEMPTS = 11;
+    private static final String ATTEMPT_LIMIT_ERROR =
+            "dispatch limit reached after lease expiration";
 
     private final OutboxDeliveryRepository repository;
     private final OrderEventPublisher publisher;
@@ -48,12 +55,7 @@ public class OutboxDeliveryCoordinator {
         Instant claimedAt = now();
         ClaimOutcome outcome =
                 Objects.requireNonNull(
-                        transaction.execute(
-                                ignored ->
-                                        repository.claimNext(
-                                                workerId,
-                                                claimedAt,
-                                                normalize(claimedAt.plus(leaseDuration)))));
+                        transaction.execute(ignored -> claimNext(workerId, claimedAt)));
         if (outcome.kind() == ClaimOutcome.Kind.NONE) {
             return false;
         }
@@ -74,22 +76,71 @@ public class OutboxDeliveryCoordinator {
         return true;
     }
 
+    private ClaimOutcome claimNext(String workerId, Instant claimedAt) {
+        Optional<LockedCandidate> locked = repository.lockNextCandidate(claimedAt, MAX_ATTEMPTS);
+        if (locked.isEmpty()) {
+            return ClaimOutcome.none();
+        }
+
+        LockedCandidate candidate = locked.orElseThrow();
+        if (candidate.status() == OutboxStatus.PROCESSING
+                && candidate.attemptCount() == MAX_ATTEMPTS) {
+            requireSingleUpdate(
+                    repository.markFailedByAttemptCount(
+                            candidate.eventId(),
+                            candidate.attemptCount(),
+                            claimedAt,
+                            ATTEMPT_LIMIT_ERROR));
+            return ClaimOutcome.quarantined(candidate.eventId());
+        }
+
+        int attemptCount = candidate.attemptCount() + 1;
+        String claimToken = UUID.randomUUID().toString();
+        requireSingleUpdate(
+                repository.markProcessing(
+                        candidate.eventId(),
+                        candidate.status(),
+                        candidate.attemptCount(),
+                        attemptCount,
+                        claimToken,
+                        workerId,
+                        normalize(claimedAt.plus(leaseDuration)),
+                        claimedAt));
+        return ClaimOutcome.claimed(
+                new ClaimedOrderEvent(
+                        candidate.eventId(), candidate.payload(), attemptCount, claimToken));
+    }
+
     private void applyResult(
             ClaimedOrderEvent event, OrderEventPublishResult result, Instant completedAt) {
         switch (result.type()) {
-            case SUCCESS -> repository.markPublished(event, completedAt);
-            case PERMANENT_FAILURE -> repository.markFailed(event, completedAt, result.error());
+            case SUCCESS ->
+                    repository.markPublished(event.eventId(), event.claimToken(), completedAt);
+            case PERMANENT_FAILURE ->
+                    repository.markFailedByClaimToken(
+                            event.eventId(), event.claimToken(), completedAt, result.error());
             case RETRYABLE_FAILURE -> {
-                if (event.attemptCount() >= 11) {
-                    repository.markFailed(event, completedAt, result.error());
+                if (event.attemptCount() >= MAX_ATTEMPTS) {
+                    repository.markFailedByClaimToken(
+                            event.eventId(), event.claimToken(), completedAt, result.error());
                 } else {
                     Duration delay =
                             backoffPolicy.retryDelay(
                                     event.attemptCount(), jitterFactor.getAsDouble());
                     repository.markPending(
-                            event, normalize(completedAt.plus(delay)), completedAt, result.error());
+                            event.eventId(),
+                            event.claimToken(),
+                            normalize(completedAt.plus(delay)),
+                            completedAt,
+                            result.error());
                 }
             }
+        }
+    }
+
+    private static void requireSingleUpdate(int updatedRows) {
+        if (updatedRows != 1) {
+            throw new IllegalStateException("locked outbox candidate update must affect one row");
         }
     }
 
@@ -105,5 +156,26 @@ public class OutboxDeliveryCoordinator {
         String message = exception.getMessage();
         return exception.getClass().getSimpleName()
                 + (message == null || message.isBlank() ? "" : ": " + message);
+    }
+
+    private record ClaimOutcome(Kind kind, Optional<ClaimedOrderEvent> event, String eventId) {
+
+        private enum Kind {
+            NONE,
+            CLAIMED,
+            QUARANTINED
+        }
+
+        private static ClaimOutcome none() {
+            return new ClaimOutcome(Kind.NONE, Optional.empty(), null);
+        }
+
+        private static ClaimOutcome claimed(ClaimedOrderEvent event) {
+            return new ClaimOutcome(Kind.CLAIMED, Optional.of(event), event.eventId());
+        }
+
+        private static ClaimOutcome quarantined(String eventId) {
+            return new ClaimOutcome(Kind.QUARANTINED, Optional.empty(), eventId);
+        }
     }
 }
