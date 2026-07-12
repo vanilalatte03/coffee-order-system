@@ -8,6 +8,7 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyResponseSnapshot;
 import com.coffeeorder.domain.point.dto.ChargePointsResponse;
 import com.coffeeorder.domain.point.entity.PointBalanceOverflowException;
 import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.global.error.ErrorCode;
 import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,9 +21,6 @@ import org.springframework.stereotype.Service;
 public class ChargePointsService {
 
     private static final Logger log = LoggerFactory.getLogger(ChargePointsService.class);
-
-    private static final String OVERFLOW_BODY =
-            "{\"code\":\"POINT_BALANCE_OVERFLOW\",\"message\":\"포인트 잔액이 범위를 초과합니다.\"}";
 
     private final IdempotencyExecutor idempotencyExecutor;
     private final ValidateUserService validateUserService;
@@ -77,7 +75,7 @@ public class ChargePointsService {
                     ChargePointsResponse.from(command.userId(), command.amount(), charged);
             return IdempotencyResponseSnapshot.success(201, writeJson(response));
         } catch (PointBalanceOverflowException exception) {
-            return IdempotencyResponseSnapshot.deterministicError(422, OVERFLOW_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.POINT_BALANCE_OVERFLOW);
         }
     }
 

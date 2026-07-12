@@ -302,20 +302,22 @@ Content-Type: application/json
 
 ## 6. 오류 코드 목록
 
-| HTTP | 코드 | 의미 | 재시도 지침 |
-| --- | --- | --- | --- |
-| 400 | `VALIDATION_ERROR` | 요청 형식 또는 필드 제약 위반 | 요청 수정 후 같은 키 또는 새 키 사용 가능 |
-| 400 | `IDEMPOTENCY_KEY_REQUIRED` | 멱등 키 누락 | 같은 요청에 키를 추가 |
-| 400 | `INVALID_IDEMPOTENCY_KEY` | 멱등 키 형식 위반 | 키 수정 |
-| 404 | `USER_NOT_FOUND` | 사용자 없음 | 사용자 식별값 확인 |
-| 404 | `MENU_NOT_FOUND` | 메뉴 없음 | 메뉴 목록 확인 후 새 키 사용 |
-| 409 | `MENU_NOT_ORDERABLE` | 비활성 메뉴 | 다른 메뉴와 새 키 사용 |
-| 409 | `INSUFFICIENT_POINTS` | 잔액 부족 | 충전 후 새 주문 키로 재시도 |
-| 409 | `IDEMPOTENCY_KEY_REUSED` | 같은 키와 다른 요청 해시 | 새 키 사용 |
-| 422 | `POINT_BALANCE_OVERFLOW` | 정수 범위 초과 | 충전액과 키 변경 |
-| 503 | `CONCURRENCY_TIMEOUT` | DB 락 대기 시간 초과 | 같은 키로 짧은 backoff 후 재시도 |
-| 503 | `DATABASE_UNAVAILABLE` | MySQL 연결·가용성 문제 | 같은 키로 재시도 |
-| 500 | `INTERNAL_SERVER_ERROR` | 분류되지 않은 서버 오류 | 같은 키로 재시도 전 운영 확인 |
+아래 HTTP 상태, `code`, 기본 `message`는 공통 오류 카탈로그와 동일하게 유지한다. `fieldErrors`는 구조적 입력 검증에서만 선택적으로 추가한다.
+
+| HTTP | 코드 | 기본 `message` | 의미 | 재시도 지침 |
+| --- | --- | --- | --- | --- |
+| 400 | `VALIDATION_ERROR` | 요청 값이 올바르지 않습니다. | 요청 형식 또는 필드 제약 위반 | 요청 수정 후 같은 키 또는 새 키 사용 가능 |
+| 400 | `IDEMPOTENCY_KEY_REQUIRED` | Idempotency-Key 헤더가 필요합니다. | 멱등 키 누락 | 같은 요청에 키를 추가 |
+| 400 | `INVALID_IDEMPOTENCY_KEY` | Idempotency-Key 형식이 올바르지 않습니다. | 멱등 키 형식 위반 | 키 수정 |
+| 404 | `USER_NOT_FOUND` | 사용자를 찾을 수 없습니다. | 사용자 없음 | 사용자 식별값 확인 |
+| 404 | `MENU_NOT_FOUND` | 메뉴를 찾을 수 없습니다. | 메뉴 없음 | 메뉴 목록 확인 후 새 키 사용 |
+| 409 | `MENU_NOT_ORDERABLE` | 주문할 수 없는 메뉴입니다. | 비활성 메뉴 | 다른 메뉴와 새 키 사용 |
+| 409 | `INSUFFICIENT_POINTS` | 포인트 잔액이 부족합니다. | 잔액 부족 | 충전 후 새 주문 키로 재시도 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | 동일한 멱등 키가 다른 요청에 사용되었습니다. | 같은 키와 다른 요청 해시 | 새 키 사용 |
+| 422 | `POINT_BALANCE_OVERFLOW` | 포인트 잔액이 범위를 초과합니다. | 정수 범위 초과 | 충전액과 키 변경 |
+| 503 | `CONCURRENCY_TIMEOUT` | 동시 요청 처리 대기 시간이 초과되었습니다. | DB 락 대기 시간 초과 | 같은 키로 짧은 backoff 후 재시도 |
+| 503 | `DATABASE_UNAVAILABLE` | 데이터베이스를 일시적으로 사용할 수 없습니다. | MySQL 연결·가용성 문제 | 같은 키로 재시도 |
+| 500 | `INTERNAL_SERVER_ERROR` | 서버 오류가 발생했습니다. | 분류되지 않은 서버 오류 | 같은 키로 재시도 전 운영 확인 |
 
 `503` 응답에는 가능한 경우 `Retry-After: 1`을 포함한다. 주문 응답에는 데이터 플랫폼이나 Redis 장애 코드를 노출하지 않는다. Redis는 DB로 폴백하고 외부 이벤트는 Outbox가 재시도하기 때문이다.
 
