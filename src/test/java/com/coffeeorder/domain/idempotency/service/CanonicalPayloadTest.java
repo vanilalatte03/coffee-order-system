@@ -27,12 +27,19 @@ class CanonicalPayloadTest {
 
         assertThat(snapshot.storedBody())
                 .isEqualTo("{\"code\":\"INSUFFICIENT_POINTS\",\"message\":\"포인트 잔액이 부족합니다.\"}");
-        String responseBody =
-                snapshot.responseBody(Instant.parse("2026-07-11T01:02:03Z"), "current-trace");
-        assertThat(responseBody)
+        String firstResponseBody =
+                snapshot.responseBody(Instant.parse("2026-07-11T01:02:03Z"), "first-trace");
+        String replayResponseBody =
+                snapshot.responseBody(Instant.parse("2026-07-11T01:02:04Z"), "replay-trace");
+
+        assertThat(firstResponseBody)
                 .isEqualTo(
-                        "{\"code\":\"INSUFFICIENT_POINTS\",\"message\":\"포인트 잔액이 부족합니다.\",\"timestamp\":\"2026-07-11T01:02:03Z\",\"traceId\":\"current-trace\"}");
-        assertThat(RequestObservability.resultCode(snapshot.responseStatus(), responseBody))
+                        "{\"code\":\"INSUFFICIENT_POINTS\",\"message\":\"포인트 잔액이 부족합니다.\",\"timestamp\":\"2026-07-11T01:02:03Z\",\"traceId\":\"first-trace\"}");
+        assertThat(replayResponseBody)
+                .isEqualTo(
+                        "{\"code\":\"INSUFFICIENT_POINTS\",\"message\":\"포인트 잔액이 부족합니다.\",\"timestamp\":\"2026-07-11T01:02:04Z\",\"traceId\":\"replay-trace\"}");
+        assertThat(snapshot.storedBody()).doesNotContain("timestamp", "traceId");
+        assertThat(RequestObservability.resultCode(snapshot.responseStatus(), replayResponseBody))
                 .isEqualTo(ErrorCode.INSUFFICIENT_POINTS.code());
     }
 
