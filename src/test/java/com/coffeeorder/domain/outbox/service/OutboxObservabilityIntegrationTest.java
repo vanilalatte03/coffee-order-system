@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +32,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 @SpringBootTest
 @ExtendWith(OutputCaptureExtension.class)
+@DisplayName("아웃박스 관측성 통합 테스트")
 class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-07-11T00:00:00Z");
@@ -47,6 +49,7 @@ class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("DELETE FROM outbox_events");
     }
 
+    @DisplayName("성공 및 재시도 격리 후 DB 상태 게이지와 전달 카운터가 일치한다")
     @Test
     void 성공_retry_격리_후_DB상태_gauge와_전달_counter가_일치한다() {
         double successBefore = deliveryResultCount("success");
@@ -92,6 +95,7 @@ class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
                 .isGreaterThanOrEqualTo(4);
     }
 
+    @DisplayName("상태 메트릭 조회는 아웃박스 행 잠금을 기다리거나 선점하지 않는다")
     @Test
     void 상태_metric_읽기는_Outbox_행_락을_기다리거나_선점하지_않는다() throws Exception {
         insert("PENDING", 0, NOW.minusSeconds(1), NOW.minusSeconds(1));
@@ -113,6 +117,7 @@ class OutboxObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @DisplayName("리스를 잃은 오래된 선점은 DB 상태와 결과 메트릭을 확정하지 않는다")
     @Test
     void lease를_잃은_stale_claim은_DB상태와_결과_metric을_확정하지_않는다(CapturedOutput output) {
         List<OrderEventPublishResult> results =

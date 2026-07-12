@@ -11,12 +11,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest
+@DisplayName("데이터베이스 실행 계획 수용 테스트")
 class DatabaseExecutionPlanAcceptanceTest extends MySqlIntegrationTestSupport {
 
     private static final Instant TO = Instant.parse("2026-07-12T00:00:00Z");
@@ -43,6 +45,7 @@ class DatabaseExecutionPlanAcceptanceTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @DisplayName("주요 조회 인덱스의 컬럼과 순서가 정본과 일치한다")
     @Test
     void 주요_query_인덱스의_컬럼과_순서가_정본과_일치한다() {
         assertThat(indexColumns("orders", "idx_orders_popular"))
@@ -53,6 +56,7 @@ class DatabaseExecutionPlanAcceptanceTest extends MySqlIntegrationTestSupport {
                 .containsExactly("status", "locked_until", "created_at");
     }
 
+    @DisplayName("ANALYZE 후 운영 조회 조건의 possible_keys에 예상 인덱스가 포함된다")
     @Test
     void analyze_후_production_query조건의_possible_keys에_예상_인덱스가_포함된다() throws Exception {
         jdbcTemplate.execute("ANALYZE TABLE orders");

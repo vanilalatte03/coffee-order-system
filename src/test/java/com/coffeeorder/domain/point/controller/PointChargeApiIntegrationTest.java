@@ -30,6 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -42,6 +43,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@DisplayName("포인트 충전 API 통합 테스트")
 class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private MockMvc mockMvc;
@@ -60,6 +62,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE point_wallets SET balance = 0, updated_at = UTC_TIMESTAMP(6)");
     }
 
+    @DisplayName("정상 충전은 201과 원장 및 재생 헤더를 반환한다")
     @Test
     void 정상_충전은_201과_원장_및_재생_헤더를_반환한다() throws Exception {
         mockMvc.perform(
@@ -91,6 +94,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(ledgerCount()).isEqualTo(1);
     }
 
+    @DisplayName("같은 키 재생은 후속 잔액과 무관하게 최초 본문을 반환한다")
     @Test
     void 같은_키_재생은_후속_잔액과_무관하게_최초_body를_반환한다() throws Exception {
         String first = performCharge("replay-key", 100).responseBody();
@@ -105,6 +109,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(ledgerCount()).isEqualTo(1);
     }
 
+    @DisplayName("같은 키의 다른 금액은 409를 반환한다")
     @Test
     void 같은_키의_다른_금액은_409이다() throws Exception {
         performCharge("reused-key", 100);
@@ -118,6 +123,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
     }
 
+    @DisplayName("없는 사용자는 404이고 어떤 기록도 남기지 않는다")
     @Test
     void 없는_사용자는_404이고_어떤_기록도_남지_않는다() throws Exception {
         mockMvc.perform(
@@ -132,6 +138,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isZero();
     }
 
+    @DisplayName("오버플로는 안정 페이로드를 저장하고 재생한다")
     @Test
     void 오버플로는_안정_payload를_저장하고_재생한다() throws Exception {
         jdbcTemplate.update(
@@ -157,6 +164,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(storedBody).doesNotContain("timestamp", "traceId");
     }
 
+    @DisplayName("같은 키 동시 20건은 충전과 원장을 한 번만 만든다")
     @Test
     void 같은_키_동시_20건은_충전과_원장을_한_번만_만든다() throws Exception {
         int requestCount = 20;
@@ -194,6 +202,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @DisplayName("완료 스냅샷 플러시 실패는 전체 롤백되고 재시도는 한 번만 충전한다")
     @Test
     void 완료_snapshot_flush_실패는_전체_롤백되고_재시도는_한_번만_충전한다() throws Exception {
         doThrow(new DataIntegrityViolationException("forced completed flush failure"))
@@ -215,6 +224,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isEqualTo(1);
     }
 
+    @DisplayName("실제 지갑 잠금 시간 초과는 503이고 같은 키 재시도는 정확히 한 번 충전한다")
     @Test
     void 실제_지갑_락_timeout은_503이고_같은_키_재시도는_정확히_한_번_충전한다() throws Exception {
         double timeoutBefore = walletLockFailureCount("lock_timeout");
@@ -269,6 +279,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
         return counter == null ? 0 : counter.count();
     }
 
+    @DisplayName("잘못된 헤더, 경로, 본문은 400이고 멱등 기록이 없다")
     @Test
     void 잘못된_header_path_body는_400이고_멱등_기록이_없다() throws Exception {
         mockMvc.perform(

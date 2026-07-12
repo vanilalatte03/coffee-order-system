@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -42,6 +43,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(InstrumentationFailureIsolationIntegrationTest.FailingMetricsConfiguration.class)
+@DisplayName("계측 실패 격리 통합 테스트")
 class InstrumentationFailureIsolationIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-07-11T00:00:00Z");
@@ -63,6 +65,7 @@ class InstrumentationFailureIsolationIntegrationTest extends MySqlIntegrationTes
         jdbcTemplate.update("UPDATE menus SET status = 'ACTIVE' WHERE id = 2");
     }
 
+    @DisplayName("레지스트리 예외에도 충전과 주문 커밋 및 원래 오류 응답을 유지한다")
     @Test
     void registry_예외에도_충전과_주문_commit과_원래_오류_응답을_유지한다() throws Exception {
         mockMvc.perform(
@@ -92,6 +95,7 @@ class InstrumentationFailureIsolationIntegrationTest extends MySqlIntegrationTes
         assertThat(balance()).isEqualTo(5100);
     }
 
+    @DisplayName("레지스트리 예외에도 아웃박스 성공 및 재시도 전이를 유지한다")
     @Test
     void registry_예외에도_Outbox_success와_retry_전이를_유지한다() {
         String successEvent = insertPending(0);
@@ -108,6 +112,7 @@ class InstrumentationFailureIsolationIntegrationTest extends MySqlIntegrationTes
         assertThat(attemptCount(retryEvent)).isEqualTo(1);
     }
 
+    @DisplayName("레지스트리와 게이지 조회 예외를 업무 밖으로 격리한다")
     @Test
     void registry와_gauge_query_예외를_업무_밖으로_격리한다() {
         assertThatCode(

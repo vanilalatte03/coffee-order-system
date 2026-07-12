@@ -16,10 +16,12 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+@DisplayName("HTTP 주문 이벤트 발행 어댑터")
 class HttpOrderEventPublisherAdapterTest {
 
     private static final String EVENT_ID = "7e8422d3-9638-4e40-a230-efbea89d8d4a";
@@ -38,6 +40,7 @@ class HttpOrderEventPublisherAdapterTest {
         }
     }
 
+    @DisplayName("이벤트 헤더와 JSON 페이로드가 외부 계약과 일치한다")
     @Test
     void eventHeaderAndJsonPayloadMatchTheExternalContract() throws Exception {
         AtomicReference<String> header = new AtomicReference<>();
@@ -64,6 +67,7 @@ class HttpOrderEventPublisherAdapterTest {
         assertThat(body).hasValue(PAYLOAD);
     }
 
+    @DisplayName("HTTP 상태를 계약에 따라 분류한다")
     @ParameterizedTest
     @CsvSource({
         "200,SUCCESS",
@@ -88,6 +92,7 @@ class HttpOrderEventPublisherAdapterTest {
         }
     }
 
+    @DisplayName("읽기 시간 초과는 재시도 가능하고 오류에 페이로드를 노출하지 않는다")
     @Test
     void readTimeoutIsRetryableAndDoesNotExposePayloadInTheError() throws Exception {
         CountDownLatch requestEntered = new CountDownLatch(1);
@@ -109,6 +114,7 @@ class HttpOrderEventPublisherAdapterTest {
         assertThat(result.error()).contains("network error").doesNotContain(PAYLOAD);
     }
 
+    @DisplayName("연결 실패는 재시도 가능하다")
     @Test
     void connectionFailureIsRetryable() throws Exception {
         server = start(exchange -> respond(exchange, 200));

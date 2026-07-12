@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,6 +35,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
 @SpringBootTest
+@DisplayName("아웃박스 운영 주기 통합 테스트")
 class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-07-11T12:00:00.123456Z");
@@ -57,6 +59,7 @@ class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("DELETE FROM outbox_events");
     }
 
+    @DisplayName("운영 주기 11회는 자동 시도 한도를 소진한다")
     @Test
     void elevenProductionCyclesExhaustTheAutomaticAttemptLimit() {
         String eventId = insertPending();
@@ -76,6 +79,7 @@ class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(httpStub.requests()).hasSize(11);
     }
 
+    @DisplayName("수신자 성공 뒤 중복 전달은 이벤트 ID별로 한 번만 적용된다")
     @Test
     void duplicateDeliveryAfterReceiverSuccessIsAppliedOnceByEventId() {
         String eventId = insertPending();
@@ -113,6 +117,7 @@ class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
     }
 
+    @DisplayName("여러 운영 작업자는 이벤트 하나를 선점 하나로 완료한다")
     @Test
     void multipleProductionWorkersCompleteOneEventWithOneClaim() throws Exception {
         String eventId = insertPending();
@@ -141,6 +146,7 @@ class OutboxProductionCycleIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
     }
 
+    @DisplayName("차단된 HTTP 응답은 DB 트랜잭션, 지갑, 아웃박스 행 잠금을 유지하지 않는다")
     @Test
     void blockedHttpResponseKeepsNoDatabaseTransactionOrWalletAndOutboxRowLock() throws Exception {
         String eventId = insertPending();
