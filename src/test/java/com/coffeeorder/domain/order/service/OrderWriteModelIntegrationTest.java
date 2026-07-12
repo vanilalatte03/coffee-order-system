@@ -8,8 +8,8 @@ import com.coffeeorder.domain.menu.service.MenuNotOrderableException;
 import com.coffeeorder.domain.menu.service.OrderableMenuResult;
 import com.coffeeorder.domain.menu.service.ValidateOrderableMenuService;
 import com.coffeeorder.domain.outbox.entity.OutboxStatus;
+import com.coffeeorder.domain.outbox.service.OutboxEventService;
 import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventCommand;
-import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventService;
 import com.coffeeorder.domain.outbox.service.RecordedOutboxEventResult;
 import com.coffeeorder.domain.point.service.PointWriteService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -39,9 +39,9 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
     private static final Instant NORMALIZED_INSTANT = Instant.parse("2026-07-11T04:35:00.456789Z");
 
     @Autowired private ValidateOrderableMenuService validateOrderableMenuService;
-    @Autowired private CreatePaidOrderService createPaidOrderService;
+    @Autowired private OrderService orderService;
     @Autowired private PointWriteService pointWriteService;
-    @Autowired private RecordOrderPaidEventService recordOrderPaidEventService;
+    @Autowired private OutboxEventService outboxEventService;
     @Autowired private TransactionTemplate transactionTemplate;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private ObjectMapper objectMapper;
@@ -184,7 +184,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
                         () ->
                                 transactionTemplate.execute(
                                         status ->
-                                                recordOrderPaidEventService.record(
+                                                outboxEventService.record(
                                                         eventCommand(result.order()))))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(count("outbox_events")).isOne();
@@ -192,10 +192,10 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     private WorkflowResult writeOrder(OrderableMenuResult menu) {
         PaidOrderResult order =
-                createPaidOrderService.create(
+                orderService.create(
                         new CreatePaidOrderCommand(10, menu.menuId(), menu.name(), menu.price()));
         long remainingBalance = pointWriteService.pay(10, order.orderId(), order.paymentAmount());
-        RecordedOutboxEventResult outbox = recordOrderPaidEventService.record(eventCommand(order));
+        RecordedOutboxEventResult outbox = outboxEventService.record(eventCommand(order));
         return new WorkflowResult(order, remainingBalance, outbox);
     }
 

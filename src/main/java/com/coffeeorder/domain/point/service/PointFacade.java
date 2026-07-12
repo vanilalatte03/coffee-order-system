@@ -7,7 +7,7 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyExecutor;
 import com.coffeeorder.domain.idempotency.service.IdempotencyResponseSnapshot;
 import com.coffeeorder.domain.point.dto.ChargePointsResponse;
 import com.coffeeorder.domain.point.entity.PointBalanceOverflowException;
-import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.domain.user.service.UserService;
 import com.coffeeorder.global.error.ErrorCode;
 import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -18,22 +18,22 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
-public class ChargePointsService {
+public class PointFacade {
 
-    private static final Logger log = LoggerFactory.getLogger(ChargePointsService.class);
+    private static final Logger log = LoggerFactory.getLogger(PointFacade.class);
 
     private final IdempotencyExecutor idempotencyExecutor;
-    private final ValidateUserService validateUserService;
+    private final UserService userService;
     private final PointWriteService pointWriteService;
     private final ObjectMapper objectMapper;
 
-    public ChargePointsService(
+    public PointFacade(
             IdempotencyExecutor idempotencyExecutor,
-            ValidateUserService validateUserService,
+            UserService userService,
             PointWriteService pointWriteService,
             ObjectMapper objectMapper) {
         this.idempotencyExecutor = idempotencyExecutor;
-        this.validateUserService = validateUserService;
+        this.userService = userService;
         this.pointWriteService = pointWriteService;
         this.objectMapper = objectMapper;
     }
@@ -53,7 +53,7 @@ public class ChargePointsService {
                         IdempotencyOperation.POINT_CHARGE,
                         command.idempotencyKey(),
                         payload,
-                        () -> validateUserService.validateExists(command.userId()),
+                        () -> userService.validateExists(command.userId()),
                         () -> executeCharge(command));
         IdempotencyResponseSnapshot snapshot = execution.snapshot();
         String responseBody = snapshot.responseBody(responseTimestamp, traceId);

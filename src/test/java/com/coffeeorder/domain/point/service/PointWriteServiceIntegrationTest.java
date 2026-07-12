@@ -7,7 +7,7 @@ import com.coffeeorder.MySqlIntegrationTestSupport;
 import com.coffeeorder.domain.point.entity.InsufficientPointBalanceException;
 import com.coffeeorder.domain.point.entity.PointBalanceOverflowException;
 import com.coffeeorder.domain.user.service.UserNotFoundException;
-import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.domain.user.service.UserService;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,7 +20,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 class PointWriteServiceIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private PointWriteService pointWriteService;
-    @Autowired private ValidateUserService validateUserService;
+    @Autowired private UserService userService;
     @Autowired private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
@@ -97,9 +97,9 @@ class PointWriteServiceIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Test
     void 사용자_기능은_존재하는_사용자와_없는_사용자를_구분한다() {
-        validateUserService.validateExists(10);
+        userService.validateExists(10);
 
-        assertThatThrownBy(() -> validateUserService.validateExists(9999))
+        assertThatThrownBy(() -> userService.validateExists(9999))
                 .isInstanceOf(UserNotFoundException.class);
     }
 

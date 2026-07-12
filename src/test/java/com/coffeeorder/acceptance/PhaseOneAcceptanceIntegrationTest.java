@@ -10,7 +10,7 @@ import com.coffeeorder.domain.order.service.CreateOrderResult;
 import com.coffeeorder.domain.order.service.OrderFacade;
 import com.coffeeorder.domain.point.service.ChargePointsCommand;
 import com.coffeeorder.domain.point.service.ChargePointsResult;
-import com.coffeeorder.domain.point.service.ChargePointsService;
+import com.coffeeorder.domain.point.service.PointFacade;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -169,7 +169,7 @@ class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
     @Test
     void 독립_context의_충전과_주문_경쟁은_지갑과_원장을_일관되게_직렬화한다() throws Exception {
         jdbcTemplate.update("UPDATE point_wallets SET balance = 5000 WHERE user_id = 10");
-        ChargePointsService chargeService = firstContext.getBean(ChargePointsService.class);
+        PointFacade pointFacade = firstContext.getBean(PointFacade.class);
         OrderFacade orderFacade = secondContext.getBean(OrderFacade.class);
         CyclicBarrier barrier = new CyclicBarrier(2);
 
@@ -178,7 +178,7 @@ class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
                     executor.submit(
                             () -> {
                                 barrier.await(10, SECONDS);
-                                return chargeService.charge(
+                                return pointFacade.charge(
                                         new ChargePointsCommand(10, 1000, "cross-context-charge"),
                                         FIRST_RESPONSE_TIME,
                                         "trace-charge");

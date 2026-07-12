@@ -10,12 +10,12 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class CreatePaidOrderService {
+public class OrderService {
 
     private final OrderRepository orderRepository;
     private final Clock clock;
 
-    public CreatePaidOrderService(OrderRepository orderRepository, Clock clock) {
+    public OrderService(OrderRepository orderRepository, Clock clock) {
         this.orderRepository = orderRepository;
         this.clock = clock;
     }
