@@ -14,6 +14,12 @@ import java.util.Objects;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+/**
+ * 최초 완료 응답을 보존하는 멱등성 요청 상태.
+ *
+ * <p>{@code PROCESSING}은 도메인 쓰기와 같은 트랜잭션에서만 존재하며, 성공 또는 결정적 비즈니스 오류는 {@code COMPLETED}로 전이해 재생 가능한
+ * snapshot을 갖는다. 일시적 실패는 이 엔티티까지 롤백한다.
+ */
 @Entity
 @Table(
         name = "idempotency_requests",
@@ -82,6 +88,11 @@ public class IdempotencyRequest {
         return new IdempotencyRequest(userId, operation, idempotencyKey, requestHash, createdAt);
     }
 
+    /**
+     * 현재 실행의 재생 가능한 HTTP 결과를 기록하고 완료 상태로 전이한다.
+     *
+     * <p>한 번 완료된 결과는 이후 요청의 현재 시각이나 trace ID와 분리된 안정 payload로 유지된다.
+     */
     public void complete(int responseStatus, String responseBody, Instant completedAt) {
         if (status != IdempotencyStatus.PROCESSING) {
             throw new IllegalStateException("only processing idempotency request can complete");

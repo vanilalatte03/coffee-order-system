@@ -8,8 +8,9 @@ Phase 1의 MySQL 기반 네 API, DB 멱등성, 비관적 지갑 락, Transaction
 Mock HTTP 발행과 운영 관측성을 구현했습니다. 실제 `mysql:8.0.42`, HTTP stub, 다중 thread와
 같은 DB를 공유하는 독립 Spring ApplicationContext 두 개로 핵심 수용 시나리오를 검증합니다.
 
-Kafka 주문 이벤트 발행과 Redis 활성 메뉴 캐시는 Phase 2 범위이며 현재 런타임에는 포함하지
-않습니다. Phase 1에서 MySQL은 메뉴, 포인트, 주문, 멱등성, Outbox와 인기 순위의 유일한
+Kafka 주문 이벤트 발행과 Redis 활성 메뉴 캐시는 **제출 이후의 향후 확장**이며 현재 런타임에는
+의도적으로 포함하지 않습니다. 이번 과제의 데이터 플랫폼 전달 요구는 Mock HTTP와 Transactional
+Outbox로 충족합니다. MySQL은 메뉴, 포인트, 주문, 멱등성, Outbox와 인기 순위의 유일한
 정본입니다.
 
 ## 빠른 시작
@@ -61,51 +62,21 @@ curl --fail --silent --show-error http://localhost:8080/actuator/health
 docker compose down
 ```
 
+애플리케이션 시작 시 Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
+
 ### IntelliJ에서 실행
 
-1. IntelliJ에서 이 저장소의 루트 폴더를 엽니다.
-2. Gradle 프로젝트 가져오기가 끝날 때까지 기다립니다.
-3. Project SDK와 Gradle JVM이 JDK 21인지 확인합니다.
-4. 터미널에서 `docker compose up -d --wait mysql`을 실행합니다.
-5. `CoffeeOrderSystemApplication`의 `main` 메서드를 실행합니다.
-6. 브라우저에서 [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)를 열어 `{"status":"UP"}`을 확인합니다.
+IntelliJ에서는 Project SDK와 Gradle JVM을 JDK 21로 설정하고 `docker compose up -d --wait mysql`을 실행한 뒤 `CoffeeOrderSystemApplication`의 `main` 메서드를 시작해 [Health endpoint](http://localhost:8080/actuator/health)가 `UP`인지 확인합니다.
 
-Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
+### 외부 이벤트 수신 설정
 
-### Mock HTTP 이벤트 수신자
-
-결제 주문이 커밋되면 애플리케이션은 `DATA_PLATFORM_BASE_URL`의
-`POST /api/v1/order-events`로 `X-Event-Id`와 JSON 이벤트를 비동기 전송합니다. 수신자는
-같은 `eventId`가 중복 도착할 수 있으므로 유니크 제약이나 동등한 멱등 처리를 적용해야 합니다.
-수신자 장애는 이미 커밋된 주문 응답을 변경하지 않으며 Outbox가 최대 11회의 자동 전송 시도 후
-실패 이벤트를 격리합니다. 변수별 기본값과 변경 방법은 [.env.example](./.env.example)을 따릅니다.
+외부 이벤트 수신 주소는 [.env.example](./.env.example)의 `DATA_PLATFORM_BASE_URL`로 설정하며, HTTP 요청 계약은 [API 명세](./docs/API.md#5-데이터-플랫폼-이벤트-계약), Outbox 재시도와 중복 처리 전략은 [Architecture](./docs/ARCHITECTURE.md#7-외부-이벤트-전달)를 따릅니다.
 
 ### 테스트와 전체 검증
 
-Docker daemon이 실행 중인 상태에서 저장소의 JDK 21과 Gradle Wrapper 8.14.5로 다음 게이트를
-실행합니다.
+Docker daemon을 실행한 뒤 포맷 검사, 테스트, 전체 빌드와 애플리케이션 Health 확인은 [Commands의 테스트와 전체 검증](./docs/COMMANDS.md#테스트와-전체-검증)을 따릅니다.
 
-Windows PowerShell:
-
-```powershell
-.\gradlew.bat spotlessCheck
-.\gradlew.bat test
-.\gradlew.bat clean build
-```
-
-POSIX 셸(Linux, macOS, WSL):
-
-```sh
-./gradlew spotlessCheck
-./gradlew test
-./gradlew clean build
-```
-
-통합 테스트는 H2나 Repository mock 대신 Testcontainers MySQL을 사용합니다. Phase 1 수용
-게이트는 동시 주문·충전, 교차 ApplicationContext 멱등성, Outbox HTTP 실패·재시도와
-`INFORMATION_SCHEMA`, `ANALYZE TABLE`, `EXPLAIN FORMAT=JSON` 기반 주요 인덱스
-`possible_keys`를 함께 검증합니다. 실제 애플리케이션 기동과 Health 확인을 포함한 전체 명령
-정본은 [Commands](./docs/COMMANDS.md)를 따릅니다.
+통합 테스트는 H2나 Repository mock 대신 Testcontainers MySQL로 실제 락·제약·트랜잭션을 검증합니다.
 
 ## 목표
 
@@ -115,6 +86,21 @@ POSIX 셸(Linux, macOS, WSL):
 - 결제 주문의 데이터 플랫폼 전달
 - 직전 168시간 인기 메뉴 상위 3개 조회
 - 동시성, 데이터 일관성, 다중 인스턴스, 예외와 테스트 고려
+
+## 필수 API 요약
+
+| 요구사항 | HTTP API | 입력 | 성공 결과 | 핵심 보장 |
+| --- | --- | --- | --- | --- |
+| 메뉴 목록 조회 | `GET /api/v1/menus` | 없음 | `ACTIVE` 메뉴를 ID 오름차순으로 반환 | 비활성 메뉴 제외 |
+| 포인트 충전 | `POST /api/v1/users/{userId}/points/charges` | `Idempotency-Key`, `amount` | 충전 원장과 충전 뒤 잔액을 `201`로 반환 | 같은 요청은 한 번만 반영 |
+| 주문·결제 | `POST /api/v1/orders` | `Idempotency-Key`, `userId`, `menuId` | `PAID` 주문과 남은 잔액을 `201`로 반환 | 주문·차감·원장·Outbox의 원자성 |
+| 인기 메뉴 조회 | `GET /api/v1/menus/popular` | 없음 | 직전 168시간 상위 3개 메뉴 반환 | MySQL 주문 원본 기준의 정확한 횟수 |
+
+각 요청·응답 필드, 대표 오류와 멱등성 헤더 계약은 [API 명세](./docs/API.md)를 따른다.
+
+## 핵심 ERD
+
+핵심 테이블 관계와 전체 컬럼·제약·인덱스는 [ERD](./docs/ERD.md#2-관계도)를 참고합니다. 주문은 결제 시점의 메뉴·가격 스냅샷을 보존하고, Outbox는 `(aggregate_type, aggregate_id)`로 주문과 논리적으로 연결합니다.
 
 ## 문제 해결 전략
 
@@ -128,19 +114,30 @@ POSIX 셸(Linux, macOS, WSL):
 
 ### 외부 데이터 전달
 
-외부 API를 주문 트랜잭션 안에서 호출하지 않습니다. 주문과 `ORDER_PAID` Outbox 이벤트를 함께 커밋한 뒤 별도 작업자가 중복 가능한 at-least-once 방식으로 발행합니다. Phase 1은 Mock HTTP, Phase 2는 Kafka를 사용합니다.
+외부 API를 주문 트랜잭션 안에서 호출하지 않습니다. 주문과 `ORDER_PAID` Outbox 이벤트를 함께 커밋한 뒤 별도 작업자가 중복 가능한 at-least-once 방식으로 발행합니다. 이번 제출에서는 Mock HTTP 수신자를 사용하며, Kafka 전환은 향후 확장 방향입니다.
 
 ### 인기 메뉴 정확성
 
 인기 메뉴는 Redis나 Kafka의 비동기 카운터가 아니라 MySQL의 `PAID` 주문 원본을 직접 집계합니다. 기준은 한 번 고정한 UTC 시각의 `[to - 168시간, to)`이며, 주문 횟수 내림차순과 메뉴 ID 오름차순으로 최대 3개를 선택합니다.
 
-### 캐시
-
-Redis는 핵심 기능을 완성한 뒤 활성 메뉴 목록에만 Cache-Aside로 적용합니다. Redis는 정본이 아니며 장애 시 MySQL로 폴백합니다.
+향후 Redis는 활성 메뉴 목록에만 Cache-Aside로 적용하되, 장애 시 MySQL로 폴백하고 MySQL을 정본으로 유지합니다.
 
 ### 검증
 
 H2 대신 MySQL Testcontainers로 비관적 락, 유니크 제약, 트랜잭션 롤백, `SKIP LOCKED`와 lease 회수를 검증합니다. 빠른 도메인 단위 테스트와 실제 DB 통합·동시성 테스트를 분리합니다.
+
+### 요구사항별 검증 근거
+
+| 요구사항·보장 | 검증 내용 | 대표 테스트 |
+| --- | --- | --- |
+| 메뉴 목록 | `ACTIVE` 메뉴만 ID 순으로 반환하고 빈 목록도 `200` | [MenuApiIntegrationTest](./src/test/java/com/coffeeorder/domain/menu/controller/MenuApiIntegrationTest.java) |
+| 포인트 충전 | 멱등 재요청, 잔액·원장 일치, 오버플로 처리 | [PointChargeApiIntegrationTest](./src/test/java/com/coffeeorder/domain/point/controller/PointChargeApiIntegrationTest.java) |
+| 주문·결제 | 주문·차감 원장·Outbox가 함께 커밋 또는 롤백 | [OrderApiIntegrationTest](./src/test/java/com/coffeeorder/domain/order/controller/OrderApiIntegrationTest.java) |
+| 인기 메뉴 | 7일 경계, 동률, 활성 메뉴 조건을 정확히 집계 | [PopularMenuApiIntegrationTest](./src/test/java/com/coffeeorder/domain/ranking/controller/PopularMenuApiIntegrationTest.java) |
+| 다중 인스턴스·동시성 | 20건 동시 주문, 독립 ApplicationContext 간 같은 키 경쟁, MySQL 지갑 락 | [PhaseOneAcceptanceIntegrationTest](./src/test/java/com/coffeeorder/acceptance/PhaseOneAcceptanceIntegrationTest.java), [PointWalletLockConcurrencyTest](./src/test/java/com/coffeeorder/domain/point/service/PointWalletLockConcurrencyTest.java) |
+| 외부 전송 | HTTP 실패·재시도·lease 회수와 최대 시도 횟수 | [OutboxProductionCycleIntegrationTest](./src/test/java/com/coffeeorder/infra/outbox/OutboxProductionCycleIntegrationTest.java) |
+
+다중 인스턴스 보장은 같은 MySQL을 공유하는 독립 Spring ApplicationContext 두 개를 사용해 DB 경계에서 검증합니다. 별도 OS 프로세스나 Kubernetes 배포 E2E는 과제 제출 이후의 운영 확장 범위입니다.
 
 ## 문서
 
@@ -167,6 +164,6 @@ H2 대신 MySQL Testcontainers로 비관적 락, 유니크 제약, 트랜잭션 
 | 중복 방지 | DB 기반 멱등성 | 다중 인스턴스와 재시작에도 효과 유지 |
 | 외부 전달 | Transactional Outbox | 주문 커밋과 내구성 있는 이벤트 기록의 원자성 |
 | 테스트 | JUnit 5, Testcontainers | 실제 MySQL 동작 검증 |
-| Phase 2 | Kafka, Redis | 이벤트 전달 채널과 메뉴 조회 캐시 |
+| 향후 확장 | Kafka, Redis | 이벤트 전달 채널과 메뉴 조회 캐시 |
 
 상세한 대안과 트레이드오프는 [ADR 인덱스](./docs/adr/README.md)에 기록했습니다.

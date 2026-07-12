@@ -8,6 +8,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 
+/**
+ * 현재 판매 중인 메뉴 카탈로그 상태.
+ *
+ * <p>주문은 이 Entity를 참조해 과거 가격을 복원하지 않고, 결제 시점의 이름과 가격을 자체 snapshot으로 저장한다.
+ */
 @Entity
 @Table(name = "menus")
 public class Menu {

@@ -16,6 +16,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * 수신자 상태 코드, 응답 지연, 이벤트 ID 중복 제거를 제어하는 데이터 플랫폼 HTTP 테스트 대역.
+ *
+ * <p>성공한 이벤트 ID는 한 번만 적용한 것으로 기록해 at-least-once 재전송에서도 수신자 멱등 처리가 필요한 이유를 테스트한다.
+ */
 final class OrderEventHttpStub implements AutoCloseable {
 
     private final HttpServer server;
@@ -51,6 +56,7 @@ final class OrderEventHttpStub implements AutoCloseable {
         return appliedEventIds.size();
     }
 
+    /** 요청이 수신된 시점과 응답을 허용할 시점을 분리해 lease 만료 경합을 재현한다. */
     void blockResponses(CountDownLatch entered, CountDownLatch release) {
         requestEntered.set(entered);
         responseRelease.set(release);

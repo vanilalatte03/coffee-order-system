@@ -17,6 +17,7 @@ import com.coffeeorder.domain.order.service.CreateOrderResult;
 import com.coffeeorder.domain.order.service.OrderFacade;
 import com.coffeeorder.domain.outbox.entity.OutboxEvent;
 import com.coffeeorder.domain.outbox.repository.OutboxEventRepository;
+import com.coffeeorder.global.observability.TraceIdFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -25,6 +26,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,10 +39,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension.class)
+@DisplayName("주문 API 통합 테스트")
 class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private MockMvc mockMvc;
@@ -64,6 +68,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE menus SET status = 'INACTIVE' WHERE id = 4");
     }
 
+    @DisplayName("주문 성공은 모든 기록을 한 건씩 원자적으로 만들고 스냅샷을 반환한다")
     @Test
     void 주문_성공은_모든_기록을_한_건씩_원자적으로_만들고_snapshot을_반환한다() throws Exception {
         String responseBody =
@@ -110,6 +115,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(databasePaidAt.getNano() % 1_000).isZero();
     }
 
+    @DisplayName("같은 키와 같은 요청은 최초 스냅샷을 재생하고 추가 효과가 없다")
     @Test
     void 같은_키_같은_요청은_최초_snapshot을_재생하고_추가_효과가_없다() {
         CreateOrderResult first = perform("same-order", 2);
@@ -125,6 +131,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("outbox_events")).isEqualTo(1);
     }
 
+    @DisplayName("같은 키와 다른 메뉴는 409를 반환한다")
     @Test
     void 같은_키_다른_메뉴는_409이다() throws Exception {
         perform("reused-order", 1);
@@ -133,6 +140,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
     }
 
+    @DisplayName("메뉴 없음, 비활성, 잔액 부족은 오류 스냅샷만 완료한다")
     @Test
     void 메뉴_없음_비활성_잔액부족은_오류_snapshot만_완료한다() throws Exception {
         assertDeterministicError("menu-missing", 999, 404, "MENU_NOT_FOUND");
@@ -151,6 +159,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .isEqualTo(3);
     }
 
+    @DisplayName("없는 사용자는 멱등 기록도 남기지 않는다")
     @Test
     void 없는_사용자는_멱등_기록도_남기지_않는다() throws Exception {
         mockMvc.perform(order("missing-user", "{\"userId\":999,\"menuId\":2}"))
@@ -159,6 +168,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("idempotency_requests")).isZero();
     }
 
+    @DisplayName("아웃박스 저장 실패는 주문, 차감, 원장, 멱등 기록을 모두 롤백한다")
     @Test
     void outbox_저장_실패는_주문_차감_원장_멱등을_모두_롤백한다() {
         doThrow(new DataIntegrityViolationException("forced outbox failure"))
@@ -171,6 +181,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertNoEffects();
     }
 
+    @DisplayName("완료 스냅샷 플러시 실패는 확정 성공 로그 없이 롤백되고 재시도는 한 번만 쓴다")
     @Test
     void completed_flush_실패는_확정_성공_로그_없이_롤백되고_재시도는_한_번만_쓴다(CapturedOutput output) {
         doThrow(new DataIntegrityViolationException("forced completed failure"))
@@ -193,6 +204,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("idempotency_requests")).isEqualTo(1);
     }
 
+    @DisplayName("가격 등 알 수 없는 필드는 400이고 효과가 없다")
     @Test
     void 가격_등_알_수_없는_필드는_400이고_효과가_없다() throws Exception {
         mockMvc.perform(order("unknown-price", "{\"userId\":10,\"menuId\":2,\"price\":1}"))
@@ -201,6 +213,7 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
         assertNoEffects();
     }
 
+    @DisplayName("실제 지갑 잠금 시간 초과는 503이고 멱등 및 도메인 효과를 남기지 않는다")
     @Test
     void 실제_지갑_락_timeout은_503이고_멱등과_도메인_효과를_남기지_않는다() throws Exception {
         try (Connection lockHolder = dataSource.getConnection()) {
@@ -233,14 +246,35 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     private void assertDeterministicError(String key, long menuId, int status, String code)
             throws Exception {
-        mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
-                .andExpect(status().is(status))
-                .andExpect(header().string("Idempotency-Replayed", "false"))
-                .andExpect(jsonPath("$.code").value(code));
-        mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
-                .andExpect(status().is(status))
-                .andExpect(header().string("Idempotency-Replayed", "true"))
-                .andExpect(jsonPath("$.code").value(code));
+        MvcResult first =
+                mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
+                        .andExpect(status().is(status))
+                        .andExpect(header().string("Idempotency-Replayed", "false"))
+                        .andExpect(jsonPath("$.code").value(code))
+                        .andReturn();
+        MvcResult replay =
+                mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
+                        .andExpect(status().is(status))
+                        .andExpect(header().string("Idempotency-Replayed", "true"))
+                        .andExpect(jsonPath("$.code").value(code))
+                        .andReturn();
+
+        var firstBody = objectMapper.readTree(first.getResponse().getContentAsByteArray());
+        var replayBody = objectMapper.readTree(replay.getResponse().getContentAsByteArray());
+        String firstTraceId = firstBody.path("traceId").asText();
+        String replayTraceId = replayBody.path("traceId").asText();
+
+        assertThat(firstTraceId)
+                .isNotBlank()
+                .isEqualTo(first.getResponse().getHeader(TraceIdFilter.TRACE_ID_HEADER));
+        assertThat(replayTraceId)
+                .isNotBlank()
+                .isEqualTo(replay.getResponse().getHeader(TraceIdFilter.TRACE_ID_HEADER))
+                .isNotEqualTo(firstTraceId);
+        assertThat(replayBody.path("message").asText())
+                .isEqualTo(firstBody.path("message").asText());
+        assertThat(firstBody.path("timestamp").asText()).isNotBlank();
+        assertThat(replayBody.path("timestamp").asText()).isNotBlank();
     }
 
     private CreateOrderResult perform(String key, long menuId) {

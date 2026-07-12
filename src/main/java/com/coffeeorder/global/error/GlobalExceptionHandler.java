@@ -20,7 +20,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.PessimisticLockingFailureException;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -30,14 +29,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+/**
+ * 내부 예외를 공개 API의 안정 오류 코드와 재시도 의미로 변환한다.
+ *
+ * <p>SQL 문장·예외 메시지·stack trace는 응답에 노출하지 않는다. DB 잠금·연결 문제처럼 클라이언트 재시도가 가능한 경우에만 {@code
+ * Retry-After}를 추가한다.
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
-    private static final String VALIDATION_ERROR = "VALIDATION_ERROR";
-    private static final String VALIDATION_MESSAGE = "요청 값이 올바르지 않습니다.";
-    private static final String INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR";
-    private static final String INTERNAL_SERVER_ERROR_MESSAGE = "서버 오류가 발생했습니다.";
     private static final MediaType JSON_UTF8 =
             new MediaType("application", "json", StandardCharsets.UTF_8);
 
@@ -59,19 +60,17 @@ public class GlobalExceptionHandler {
                                         new FieldErrorResponse(
                                                 fieldError.getField(),
                                                 fieldError.getDefaultMessage() == null
-                                                        ? VALIDATION_MESSAGE
+                                                        ? ErrorCode.VALIDATION_ERROR.message()
                                                         : fieldError.getDefaultMessage()))
                         .toList();
 
-        return errorResponse(
-                HttpStatus.BAD_REQUEST, VALIDATION_ERROR, VALIDATION_MESSAGE, fieldErrors, request);
+        return errorResponse(ErrorCode.VALIDATION_ERROR, fieldErrors, request);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleUnreadableMessage(
             HttpMessageNotReadableException exception, HttpServletRequest request) {
-        return errorResponse(
-                HttpStatus.BAD_REQUEST, VALIDATION_ERROR, VALIDATION_MESSAGE, List.of(), request);
+        return errorResponse(ErrorCode.VALIDATION_ERROR, List.of(), request);
     }
 
     @ExceptionHandler({
@@ -80,48 +79,31 @@ public class GlobalExceptionHandler {
     })
     public ResponseEntity<ErrorResponse> handleRequestValidation(
             Exception exception, HttpServletRequest request) {
-        return errorResponse(
-                HttpStatus.BAD_REQUEST, VALIDATION_ERROR, VALIDATION_MESSAGE, List.of(), request);
+        return errorResponse(ErrorCode.VALIDATION_ERROR, List.of(), request);
     }
 
     @ExceptionHandler(IdempotencyKeyRequiredException.class)
     public ResponseEntity<ErrorResponse> handleMissingIdempotencyKey(
             IdempotencyKeyRequiredException exception, HttpServletRequest request) {
-        return errorResponse(
-                HttpStatus.BAD_REQUEST,
-                "IDEMPOTENCY_KEY_REQUIRED",
-                "Idempotency-Key 헤더가 필요합니다.",
-                List.of(),
-                request);
+        return errorResponse(ErrorCode.IDEMPOTENCY_KEY_REQUIRED, List.of(), request);
     }
 
     @ExceptionHandler(InvalidIdempotencyKeyException.class)
     public ResponseEntity<ErrorResponse> handleInvalidIdempotencyKey(
             InvalidIdempotencyKeyException exception, HttpServletRequest request) {
-        return errorResponse(
-                HttpStatus.BAD_REQUEST,
-                "INVALID_IDEMPOTENCY_KEY",
-                "Idempotency-Key 형식이 올바르지 않습니다.",
-                List.of(),
-                request);
+        return errorResponse(ErrorCode.INVALID_IDEMPOTENCY_KEY, List.of(), request);
     }
 
     @ExceptionHandler(UserNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleUserNotFound(
             UserNotFoundException exception, HttpServletRequest request) {
-        return errorResponse(
-                HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "사용자를 찾을 수 없습니다.", List.of(), request);
+        return errorResponse(ErrorCode.USER_NOT_FOUND, List.of(), request);
     }
 
     @ExceptionHandler(IdempotencyKeyReusedException.class)
     public ResponseEntity<ErrorResponse> handleIdempotencyKeyReused(
             IdempotencyKeyReusedException exception, HttpServletRequest request) {
-        return errorResponse(
-                HttpStatus.CONFLICT,
-                "IDEMPOTENCY_KEY_REUSED",
-                "동일한 멱등 키가 다른 요청에 사용되었습니다.",
-                List.of(),
-                request);
+        return errorResponse(ErrorCode.IDEMPOTENCY_KEY_REUSED, List.of(), request);
     }
 
     @ExceptionHandler({
@@ -151,6 +133,7 @@ public class GlobalExceptionHandler {
         return concurrencyTimeoutResponse(request);
     }
 
+    /** DB 예외 원인 사슬을 분류해 잠금 경합, 일시적 연결 장애, 알 수 없는 서버 오류를 구분한다. */
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ErrorResponse> handleDatabaseFailure(
             DataAccessException exception, HttpServletRequest request) {
@@ -165,24 +148,13 @@ public class GlobalExceptionHandler {
                     "database_unavailable errorType={} traceId={}",
                     exception.getClass().getSimpleName(),
                     TraceIdFilter.getTraceId(request));
-            return errorResponse(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "DATABASE_UNAVAILABLE",
-                    "데이터베이스를 일시적으로 사용할 수 없습니다.",
-                    List.of(),
-                    request,
-                    true);
+            return errorResponse(ErrorCode.DATABASE_UNAVAILABLE, List.of(), request, true);
         }
         log.error(
                 "unclassified_database_failure errorType={} traceId={}",
                 exception.getClass().getSimpleName(),
                 TraceIdFilter.getTraceId(request));
-        return errorResponse(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                INTERNAL_SERVER_ERROR,
-                INTERNAL_SERVER_ERROR_MESSAGE,
-                List.of(),
-                request);
+        return errorResponse(ErrorCode.INTERNAL_SERVER_ERROR, List.of(), request);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
@@ -197,39 +169,25 @@ public class GlobalExceptionHandler {
                 "unhandled_request_failure errorType={} traceId={}",
                 exception.getClass().getSimpleName(),
                 TraceIdFilter.getTraceId(request));
-        return errorResponse(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                INTERNAL_SERVER_ERROR,
-                INTERNAL_SERVER_ERROR_MESSAGE,
-                List.of(),
-                request);
+        return errorResponse(ErrorCode.INTERNAL_SERVER_ERROR, List.of(), request);
     }
 
     private ResponseEntity<ErrorResponse> errorResponse(
-            HttpStatus status,
-            String code,
-            String message,
-            List<FieldErrorResponse> fieldErrors,
-            HttpServletRequest request) {
-        return errorResponse(status, code, message, fieldErrors, request, false);
+            ErrorCode errorCode, List<FieldErrorResponse> fieldErrors, HttpServletRequest request) {
+        return errorResponse(errorCode, fieldErrors, request, false);
     }
 
     private ResponseEntity<ErrorResponse> errorResponse(
-            HttpStatus status,
-            String code,
-            String message,
+            ErrorCode errorCode,
             List<FieldErrorResponse> fieldErrors,
             HttpServletRequest request,
             boolean retryable) {
-        RequestObservability.result(request, code);
+        RequestObservability.result(request, errorCode.code());
         ErrorResponse response =
-                new ErrorResponse(
-                        clock.instant(),
-                        TraceIdFilter.getTraceId(request),
-                        code,
-                        message,
-                        fieldErrors);
-        ResponseEntity.BodyBuilder builder = ResponseEntity.status(status).contentType(JSON_UTF8);
+                ErrorResponse.of(
+                        clock.instant(), TraceIdFilter.getTraceId(request), errorCode, fieldErrors);
+        ResponseEntity.BodyBuilder builder =
+                ResponseEntity.status(errorCode.status()).contentType(JSON_UTF8);
         if (retryable) {
             builder.header("Retry-After", "1");
         }
@@ -237,17 +195,6 @@ public class GlobalExceptionHandler {
     }
 
     private ResponseEntity<ErrorResponse> concurrencyTimeoutResponse(HttpServletRequest request) {
-        RequestObservability.result(request, "CONCURRENCY_TIMEOUT");
-        ErrorResponse response =
-                new ErrorResponse(
-                        clock.instant(),
-                        TraceIdFilter.getTraceId(request),
-                        "CONCURRENCY_TIMEOUT",
-                        "동시 요청 처리 대기 시간이 초과되었습니다.",
-                        List.of());
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header("Retry-After", "1")
-                .contentType(JSON_UTF8)
-                .body(response);
+        return errorResponse(ErrorCode.CONCURRENCY_TIMEOUT, List.of(), request, true);
     }
 }

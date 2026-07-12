@@ -7,15 +7,16 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyExecutor;
 import com.coffeeorder.domain.idempotency.service.IdempotencyResponseSnapshot;
 import com.coffeeorder.domain.menu.service.MenuNotFoundException;
 import com.coffeeorder.domain.menu.service.MenuNotOrderableException;
+import com.coffeeorder.domain.menu.service.MenuService;
 import com.coffeeorder.domain.menu.service.OrderableMenuResult;
-import com.coffeeorder.domain.menu.service.ValidateOrderableMenuService;
 import com.coffeeorder.domain.order.dto.CreateOrderResponse;
 import com.coffeeorder.domain.order.dto.OrderMenuResponse;
+import com.coffeeorder.domain.outbox.service.OutboxEventService;
 import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventCommand;
-import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventService;
 import com.coffeeorder.domain.point.service.PointPaymentPreparation;
 import com.coffeeorder.domain.point.service.PointWriteService;
-import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.domain.user.service.UserService;
+import com.coffeeorder.global.error.ErrorCode;
 import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,43 +25,48 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+/**
+ * 주문·결제의 멱등성 경계와 도메인 쓰기 순서를 조정한다.
+ *
+ * <p>메뉴 검증, 지갑 잠금, 주문·원장·Outbox 기록과 완료 응답 저장은 {@link IdempotencyExecutor}가 하나의 쓰기 트랜잭션으로 묶는다. 외부
+ * 데이터 플랫폼 호출은 이 흐름에 포함하지 않고 Outbox에만 기록한다.
+ */
 @Service
 public class OrderFacade {
 
     private static final Logger log = LoggerFactory.getLogger(OrderFacade.class);
 
-    private static final String MENU_NOT_FOUND_BODY =
-            "{\"code\":\"MENU_NOT_FOUND\",\"message\":\"메뉴를 찾을 수 없습니다.\"}";
-    private static final String MENU_NOT_ORDERABLE_BODY =
-            "{\"code\":\"MENU_NOT_ORDERABLE\",\"message\":\"주문할 수 없는 메뉴입니다.\"}";
-    private static final String INSUFFICIENT_POINTS_BODY =
-            "{\"code\":\"INSUFFICIENT_POINTS\",\"message\":\"포인트 잔액이 부족합니다.\"}";
-
     private final IdempotencyExecutor idempotencyExecutor;
-    private final ValidateUserService validateUserService;
-    private final ValidateOrderableMenuService validateOrderableMenuService;
+    private final UserService userService;
+    private final MenuService menuService;
     private final PointWriteService pointWriteService;
-    private final CreatePaidOrderService createPaidOrderService;
-    private final RecordOrderPaidEventService recordOrderPaidEventService;
+    private final OrderService orderService;
+    private final OutboxEventService outboxEventService;
     private final ObjectMapper objectMapper;
 
     public OrderFacade(
             IdempotencyExecutor idempotencyExecutor,
-            ValidateUserService validateUserService,
-            ValidateOrderableMenuService validateOrderableMenuService,
+            UserService userService,
+            MenuService menuService,
             PointWriteService pointWriteService,
-            CreatePaidOrderService createPaidOrderService,
-            RecordOrderPaidEventService recordOrderPaidEventService,
+            OrderService orderService,
+            OutboxEventService outboxEventService,
             ObjectMapper objectMapper) {
         this.idempotencyExecutor = idempotencyExecutor;
-        this.validateUserService = validateUserService;
-        this.validateOrderableMenuService = validateOrderableMenuService;
+        this.userService = userService;
+        this.menuService = menuService;
         this.pointWriteService = pointWriteService;
-        this.createPaidOrderService = createPaidOrderService;
-        this.recordOrderPaidEventService = recordOrderPaidEventService;
+        this.orderService = orderService;
+        this.outboxEventService = outboxEventService;
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 메뉴 한 개를 수량 1개로 결제하고 최초 결과 또는 재생 결과를 반환한다.
+     *
+     * <p>최초 실행의 순서는 메뉴 검증, 지갑 잠금·잔액 확인, {@code PAID} 주문 저장, 포인트 차감 원장, {@code ORDER_PAID} Outbox
+     * 기록이다. 메뉴 오류와 잔액 부족은 도메인 쓰기 없이 결정적 오류 snapshot으로 완료되며, 저장 실패는 전체 트랜잭션을 롤백한다.
+     */
     public CreateOrderResult create(
             CreateOrderCommand command, Instant responseTimestamp, String traceId) {
         CanonicalPayload payload =
@@ -76,7 +82,7 @@ public class OrderFacade {
                         IdempotencyOperation.ORDER_CREATE,
                         command.idempotencyKey(),
                         payload,
-                        () -> validateUserService.validateExists(command.userId()),
+                        () -> userService.validateExists(command.userId()),
                         () -> executeOrder(command, traceId));
         IdempotencyResponseSnapshot snapshot = execution.snapshot();
         String responseBody = snapshot.responseBody(responseTimestamp, traceId);
@@ -92,27 +98,27 @@ public class OrderFacade {
     private IdempotencyResponseSnapshot executeOrder(CreateOrderCommand command, String traceId) {
         OrderableMenuResult menu;
         try {
-            menu = validateOrderableMenuService.validate(command.menuId());
+            menu = menuService.validateOrderable(command.menuId());
         } catch (MenuNotFoundException exception) {
-            return IdempotencyResponseSnapshot.deterministicError(404, MENU_NOT_FOUND_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.MENU_NOT_FOUND);
         } catch (MenuNotOrderableException exception) {
-            return IdempotencyResponseSnapshot.deterministicError(409, MENU_NOT_ORDERABLE_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.MENU_NOT_ORDERABLE);
         }
 
         PointPaymentPreparation payment =
                 pointWriteService.preparePayment(command.userId(), menu.price());
         if (!payment.sufficient()) {
-            return IdempotencyResponseSnapshot.deterministicError(409, INSUFFICIENT_POINTS_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.INSUFFICIENT_POINTS);
         }
 
         PaidOrderResult order =
-                createPaidOrderService.create(
+                orderService.create(
                         new CreatePaidOrderCommand(
                                 command.userId(), menu.menuId(), menu.name(), menu.price()));
         long remainingBalance =
                 pointWriteService.completePayment(
                         payment.paymentLock(), order.userId(), order.orderId());
-        recordOrderPaidEventService.record(
+        outboxEventService.record(
                 new RecordOrderPaidEventCommand(
                         order.orderId(),
                         order.userId(),

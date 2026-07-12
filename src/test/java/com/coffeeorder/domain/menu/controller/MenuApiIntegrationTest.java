@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -16,11 +17,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@DisplayName("메뉴 API 통합 테스트")
 class MenuApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private JdbcTemplate jdbcTemplate;
 
+    @DisplayName("활성 메뉴만 ID 오름차순으로 정확한 API 필드를 반환한다")
     @Test
     void 활성_메뉴만_ID_오름차순으로_정확한_API_필드를_반환한다() throws Exception {
         mockMvc.perform(get("/api/v1/menus"))
@@ -41,6 +44,7 @@ class MenuApiIntegrationTest extends MySqlIntegrationTestSupport {
                                         JsonCompareMode.STRICT));
     }
 
+    @DisplayName("활성 메뉴가 없으면 빈 items를 반환한다")
     @Test
     @Transactional
     void 활성_메뉴가_없으면_빈_items를_반환한다() throws Exception {

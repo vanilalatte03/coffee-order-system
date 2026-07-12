@@ -10,6 +10,12 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+/**
+ * Outbox 선점과 상태 전이를 SQL 조건부 갱신으로 수행하는 repository.
+ *
+ * <p>후보 ID를 먼저 정렬해 찾은 뒤 행마다 {@code FOR UPDATE SKIP LOCKED}를 시도한다. 경쟁 작업자가 먼저 가져간 후보는 건너뛰고 다음 후보를
+ * 확인하므로 여러 인스턴스가 같은 이벤트를 동시에 발행하지 않는다. 모든 선점·상태 전이 호출은 짧은 트랜잭션 안에서 이뤄져야 한다.
+ */
 @Repository
 public class OutboxDeliveryRepository {
 
@@ -21,6 +27,11 @@ public class OutboxDeliveryRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /**
+     * 예약 시각이 지난 {@code PENDING} 또는 lease가 만료된 {@code PROCESSING} 이벤트 하나를 잠근다.
+     *
+     * <p>반환된 후보는 호출 트랜잭션이 끝나기 전에 상태 전이해야 한다. 빈 값은 처리 대상이 없거나 모든 후보를 다른 작업자가 선점한 경우다.
+     */
     public Optional<LockedCandidate> lockNextCandidate(Instant now, int maxAttempts) {
         for (CandidateId candidateId : candidateIds(now, maxAttempts)) {
             List<LockedCandidate> locked = lockCandidate(candidateId, now, maxAttempts);
@@ -31,6 +42,11 @@ public class OutboxDeliveryRepository {
         return Optional.empty();
     }
 
+    /**
+     * 잠긴 후보를 새 lease와 claim token을 가진 {@code PROCESSING} 상태로 전이한다.
+     *
+     * <p>기대 상태와 시도 횟수를 WHERE 절에 함께 둬, 후보 조회 뒤 상태가 바뀐 행을 잘못 선점하지 않는다.
+     */
     public int markProcessing(
             String eventId,
             OutboxStatus expectedStatus,
@@ -57,6 +73,11 @@ public class OutboxDeliveryRepository {
                 expectedAttemptCount);
     }
 
+    /**
+     * lease가 만료된 마지막 시도를 외부 재호출 없이 격리한다.
+     *
+     * <p>{@code attemptCount}가 이미 한도인 행만 갱신해 자동 시도 횟수가 11을 넘지 않게 한다.
+     */
     public int markFailedByAttemptCount(
             String eventId, int expectedAttemptCount, Instant updatedAt, String error) {
         return jdbcTemplate.update(
@@ -124,6 +145,7 @@ public class OutboxDeliveryRepository {
                 Timestamp.from(now));
     }
 
+    /** 현재 claim token 소유자의 성공 결과만 {@code PUBLISHED}로 반영한다. */
     public int markPublished(String eventId, String claimToken, Instant publishedAt) {
         return jdbcTemplate.update(
                 """
@@ -138,6 +160,11 @@ public class OutboxDeliveryRepository {
                 claimToken);
     }
 
+    /**
+     * 재시도 가능한 실패를 다음 예약 시각의 {@code PENDING} 상태로 되돌린다.
+     *
+     * <p>claim token이 일치할 때만 lease를 비우므로, 만료 뒤 회수된 이벤트의 늦은 실패 결과는 무시된다.
+     */
     public int markPending(
             String eventId,
             String claimToken,
@@ -158,6 +185,7 @@ public class OutboxDeliveryRepository {
                 claimToken);
     }
 
+    /** 영구 실패 또는 현재 시도 한도 소진을 현재 claim token 소유자에게만 반영한다. */
     public int markFailedByClaimToken(
             String eventId, String claimToken, Instant updatedAt, String error) {
         return jdbcTemplate.update(
@@ -173,6 +201,11 @@ public class OutboxDeliveryRepository {
                 claimToken);
     }
 
+    /**
+     * 운영자가 격리 이벤트를 새 자동 처리 주기로 재개할 때 호출한다.
+     *
+     * <p>시도 횟수와 lease만 초기화하고 마지막 실패 원인은 보존한다.
+     */
     public int resetFailed(String eventId, Instant now) {
         return jdbcTemplate.update(
                 """
@@ -203,6 +236,7 @@ public class OutboxDeliveryRepository {
         return error.length() <= MAX_ERROR_LENGTH ? error : error.substring(0, MAX_ERROR_LENGTH);
     }
 
+    /** 현재 트랜잭션에서 잠긴 Outbox 행의 발행에 필요한 최소 snapshot. */
     public record LockedCandidate(
             String eventId,
             String payload,

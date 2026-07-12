@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,6 +31,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
+@DisplayName("아웃박스 전달 조정기 통합 테스트")
 class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-07-11T10:00:00.123456Z");
@@ -43,6 +45,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         jdbcTemplate.update("DELETE FROM outbox_events");
     }
 
+    @DisplayName("대기 경계는 포함하고 미래 이벤트는 선점하지 않는다")
     @Test
     void pendingBoundaryIsInclusiveButFutureEventIsNotClaimed() {
         String ready = insertPending(NOW, 0);
@@ -65,6 +68,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(calls).hasValue(1);
     }
 
+    @DisplayName("리스 경계는 제외하고 만료된 선점에는 새 토큰을 부여한다")
     @Test
     void leaseBoundaryIsExclusiveAndExpiredClaimGetsANewToken() {
         String atBoundary = insertProcessing(NOW, 3, "old-boundary");
@@ -93,6 +97,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(attemptCount(atBoundary)).isEqualTo(3);
     }
 
+    @DisplayName("오래된 만료 처리 이벤트를 준비된 대기 이벤트보다 먼저 선점한다")
     @Test
     void olderExpiredProcessingIsClaimedBeforeReadyPending() {
         String readyPending = insertPending(NOW, 0);
@@ -121,6 +126,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(attemptCount(readyPending)).isZero();
     }
 
+    @DisplayName("만료된 11번째 시도는 발행자 호출 없이 격리한다")
     @Test
     void expiredEleventhAttemptIsQuarantinedWithoutCallingPublisher() {
         String eventId = insertProcessing(NOW.minusSeconds(1), 11, "last-token");
@@ -143,6 +149,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(calls).hasValue(0);
     }
 
+    @DisplayName("발행자는 트랜잭션 밖에서 실행되고 성공하면 선점을 해제한다")
     @Test
     void publisherRunsWithoutTransactionAndSuccessClearsClaim() {
         String eventId = insertPending(NOW, 0);
@@ -176,6 +183,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(nullableTimestamp(eventId, "locked_until")).isNull();
     }
 
+    @DisplayName("재시도 가능 및 영구 결과는 상태 전이를 따른다")
     @Test
     void retryableAndPermanentResultsFollowTheirStateTransitions() {
         String retryable = insertPending(NOW, 0);
@@ -203,6 +211,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertClaimFieldsCleared(retryable);
     }
 
+    @DisplayName("발행자 예외는 재시도 가능 실패가 되고 선점을 해제한다")
     @Test
     void publisherExceptionBecomesRetryableFailureAndClearsClaim() {
         String eventId = insertPending(NOW, 0);
@@ -223,6 +232,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertClaimFieldsCleared(eventId);
     }
 
+    @DisplayName("11번째 재시도 가능 실패는 즉시 실패 처리하고 오류를 제한한다")
     @Test
     void eleventhRetryableFailureFailsImmediatelyAndErrorIsBounded() {
         String eventId = insertPending(NOW, 10);
@@ -244,6 +254,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(calls).hasValue(1);
     }
 
+    @DisplayName("오래된 토큰은 처리 중인 새 선점을 덮어쓸 수 없다")
     @Test
     void staleTokenCannotOverwriteNewClaimWhileItIsProcessing() {
         String eventId = insertProcessing(NOW.minusSeconds(1), 1, "stale-token");
@@ -283,6 +294,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
     }
 
+    @DisplayName("리스는 후보 잠금을 획득한 뒤 시작한다")
     @Test
     void leaseStartsAfterCandidateLockIsAcquired() {
         String eventId = insertPending(NOW, 0);
@@ -318,6 +330,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(timestamp(eventId, "updated_at")).isEqualTo(Timestamp.from(NOW.plusSeconds(20)));
     }
 
+    @DisplayName("나노초 시계 값은 데이터베이스 마이크로초로 정규화한다")
     @Test
     void nanosecondClockValuesAreNormalizedToDatabaseMicroseconds() {
         Instant nanosecondNow = Instant.parse("2026-07-11T10:00:00.123456789Z");
@@ -352,6 +365,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
                 .isEqualTo(Timestamp.from(normalizedNow.plusSeconds(1)));
     }
 
+    @DisplayName("첫 번째 행 잠금 중에도 SKIP LOCKED는 두 번째 후보를 선택한다")
     @Test
     void skipLockedSelectsSecondCandidateWhileFirstRowLockIsHeld() throws Exception {
         String firstId = insertPending(NOW.minusSeconds(1), 0);
@@ -394,6 +408,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         }
     }
 
+    @DisplayName("동시 작업자는 후보 하나를 한 번만 선점한다")
     @Test
     void concurrentWorkersClaimOneCandidateOnlyOnce() throws Exception {
         String eventId = insertPending(NOW, 0);
@@ -427,6 +442,7 @@ class OutboxDeliveryCoordinatorIntegrationTest extends MySqlIntegrationTestSuppo
         assertThat(status(eventId)).isEqualTo("PUBLISHED");
     }
 
+    @DisplayName("동시 작업자는 서로 다른 후보를 분배한다")
     @Test
     void concurrentWorkersDistributeDifferentCandidates() throws Exception {
         String firstId = insertPending(NOW, 0);

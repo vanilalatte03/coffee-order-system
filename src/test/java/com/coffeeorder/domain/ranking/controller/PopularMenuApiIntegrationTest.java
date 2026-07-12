@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -28,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureMockMvc
 @Transactional
 @Import(PopularMenuApiIntegrationTest.ClockTestConfiguration.class)
+@DisplayName("인기 메뉴 API 통합 테스트")
 class PopularMenuApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant FIXED_TO = Instant.parse("2026-07-10T04:40:00.123456Z");
@@ -42,6 +44,7 @@ class PopularMenuApiIntegrationTest extends MySqlIntegrationTestSupport {
         testClock.setInstant(FIXED_TO);
     }
 
+    @DisplayName("시작 경계 주문은 포함하고 종료 경계 및 기간 밖 주문은 제외한다")
     @Test
     void 정확히_from인_주문은_포함하고_to인_주문과_기간_밖_주문은_제외한다() throws Exception {
         insertPaidOrder(1, FIXED_FROM, "하한 스냅샷", 4100);
@@ -58,6 +61,7 @@ class PopularMenuApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .andExpect(jsonPath("$.items[0].orderCount").value(1));
     }
 
+    @DisplayName("PAID가 아닌 주문과 비활성 메뉴를 제외한다")
     @Test
     void PAID가_아닌_주문과_INACTIVE_메뉴를_제외한다() throws Exception {
         jdbcTemplate.execute("ALTER TABLE orders DROP CHECK chk_orders_status");
@@ -78,6 +82,7 @@ class PopularMenuApiIntegrationTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @DisplayName("주문 수 내림차순과 메뉴 ID 오름차순으로 정렬하고 세 개만 반환한다")
     @Test
     void 주문수_내림차순과_메뉴_ID_오름차순으로_정렬하고_세_개만_반환한다() throws Exception {
         jdbcTemplate.update("UPDATE menus SET status = 'ACTIVE' WHERE id = 4");
@@ -98,6 +103,7 @@ class PopularMenuApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .andExpect(jsonPath("$.items[2].menuId").value(2));
     }
 
+    @DisplayName("대상이 없으면 같은 경계와 빈 items를 반환한다")
     @Test
     void 대상이_없으면_같은_경계와_빈_items를_반환한다() throws Exception {
         mockMvc.perform(get("/api/v1/menus/popular"))
@@ -107,6 +113,7 @@ class PopularMenuApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .andExpect(jsonPath("$.items").isEmpty());
     }
 
+    @DisplayName("현재 메뉴 이름과 가격을 반환하고 주문 스냅샷 행 수를 집계한다")
     @Test
     void 현재_메뉴_이름과_가격을_반환하고_주문_스냅샷_행_수를_집계한다() throws Exception {
         jdbcTemplate.update("UPDATE menus SET name = '리뉴얼 아메리카노', price = 4900 WHERE id = 1");
@@ -120,6 +127,7 @@ class PopularMenuApiIntegrationTest extends MySqlIntegrationTestSupport {
                 .andExpect(jsonPath("$.items[0].orderCount").value(2));
     }
 
+    @DisplayName("나노초 Clock을 마이크로초로 절삭한 경계를 API와 조회가 공유한다")
     @Test
     void 나노초_Clock을_microsecond로_절삭한_경계를_API와_query가_공유한다() throws Exception {
         testClock.setInstant(Instant.parse("2026-07-10T04:40:00.123456789Z"));

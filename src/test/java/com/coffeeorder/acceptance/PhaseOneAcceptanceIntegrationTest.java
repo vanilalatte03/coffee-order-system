@@ -10,7 +10,7 @@ import com.coffeeorder.domain.order.service.CreateOrderResult;
 import com.coffeeorder.domain.order.service.OrderFacade;
 import com.coffeeorder.domain.point.service.ChargePointsCommand;
 import com.coffeeorder.domain.point.service.ChargePointsResult;
-import com.coffeeorder.domain.point.service.ChargePointsService;
+import com.coffeeorder.domain.point.service.PointFacade;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -23,6 +23,7 @@ import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.boot.WebApplicationType;
@@ -31,6 +32,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@DisplayName("1단계 수용 통합 테스트")
 class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant FIRST_RESPONSE_TIME = Instant.parse("2026-07-12T01:00:00.123456Z");
@@ -77,6 +79,7 @@ class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE menus SET status = 'INACTIVE' WHERE id = 4");
     }
 
+    @DisplayName("서로 다른 키의 동시 주문 20건은 잔액 범위에서 정확히 10건만 성공한다")
     @Test
     void 서로_다른_키의_동시_주문_20건은_잔액_범위에서_정확히_10건만_성공한다() throws Exception {
         jdbcTemplate.update("UPDATE menus SET price = 1000 WHERE id = 1");
@@ -122,6 +125,7 @@ class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("idempotency_requests")).isEqualTo(20);
     }
 
+    @DisplayName("독립 컨텍스트의 같은 주문과 키 경쟁은 최초 결과만 한 번 만든다")
     @Test
     void 독립_context의_같은_주문과_키_경쟁은_최초_결과만_한_번_만든다() throws Exception {
         jdbcTemplate.update("UPDATE point_wallets SET balance = 10000 WHERE user_id = 10");
@@ -166,10 +170,11 @@ class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("idempotency_requests")).isEqualTo(1);
     }
 
+    @DisplayName("독립 컨텍스트의 충전과 주문 경쟁은 지갑과 원장을 일관되게 직렬화한다")
     @Test
     void 독립_context의_충전과_주문_경쟁은_지갑과_원장을_일관되게_직렬화한다() throws Exception {
         jdbcTemplate.update("UPDATE point_wallets SET balance = 5000 WHERE user_id = 10");
-        ChargePointsService chargeService = firstContext.getBean(ChargePointsService.class);
+        PointFacade pointFacade = firstContext.getBean(PointFacade.class);
         OrderFacade orderFacade = secondContext.getBean(OrderFacade.class);
         CyclicBarrier barrier = new CyclicBarrier(2);
 
@@ -178,7 +183,7 @@ class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
                     executor.submit(
                             () -> {
                                 barrier.await(10, SECONDS);
-                                return chargeService.charge(
+                                return pointFacade.charge(
                                         new ChargePointsCommand(10, 1000, "cross-context-charge"),
                                         FIRST_RESPONSE_TIME,
                                         "trace-charge");
@@ -207,6 +212,7 @@ class PhaseOneAcceptanceIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("idempotency_requests")).isEqualTo(2);
     }
 
+    @DisplayName("비활성 메뉴 재전송은 안정 페이로드와 현재 요청 메타데이터를 반환한다")
     @Test
     void 비활성_메뉴_재전송은_안정_payload와_현재_요청_메타데이터를_반환한다() throws Exception {
         OrderFacade facade = firstContext.getBean(OrderFacade.class);

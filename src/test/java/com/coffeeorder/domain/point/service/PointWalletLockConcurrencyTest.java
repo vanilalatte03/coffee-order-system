@@ -17,12 +17,14 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest
+@DisplayName("포인트 지갑 잠금 동시성 테스트")
 class PointWalletLockConcurrencyTest extends MySqlIntegrationTestSupport {
 
     @Autowired private PointWriteService pointWriteService;
@@ -36,6 +38,7 @@ class PointWalletLockConcurrencyTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE point_wallets SET balance = 0, updated_at = UTC_TIMESTAMP(6)");
     }
 
+    @DisplayName("같은 지갑의 쓰기는 별도 연결과 트랜잭션에서 직렬화된다")
     @Test
     void 같은_지갑의_쓰기는_별도_connection과_transaction에서_직렬화된다() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -74,6 +77,7 @@ class PointWalletLockConcurrencyTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @DisplayName("서로 다른 사용자 지갑은 독립적으로 변경된다")
     @Test
     void 서로_다른_사용자_지갑은_독립적으로_변경된다() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);

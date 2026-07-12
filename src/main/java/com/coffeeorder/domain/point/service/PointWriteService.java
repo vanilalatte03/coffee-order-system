@@ -18,6 +18,12 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+/**
+ * MySQL 지갑 행 잠금 아래에서 포인트 잔액과 원장을 함께 변경한다.
+ *
+ * <p>모든 쓰기 경로는 {@code point_wallets.user_id}를 먼저 비관적으로 잠가 같은 사용자의 충전과 결제를 직렬화한다. 외부 호출은 이 서비스의 트랜잭션
+ * 안에서 수행하지 않는다.
+ */
 @Service
 public class PointWriteService {
 
@@ -45,6 +51,12 @@ public class PointWriteService {
         return chargeWithResult(userId, amount).balance();
     }
 
+    /**
+     * 지갑 잠금, 잔액 증가, 충전 원장을 하나의 트랜잭션으로 처리한다.
+     *
+     * <p>오버플로는 Facade가 재생 가능한 결정적 오류 snapshot으로 바꾸므로 rollback-only로 만들지 않는다. 이를 통해 같은 멱등성 트랜잭션에서 오류
+     * 결과를 {@code COMPLETED}로 저장할 수 있다.
+     */
     @Transactional(
             propagation = Propagation.REQUIRED,
             noRollbackFor = PointBalanceOverflowException.class)
@@ -69,6 +81,12 @@ public class PointWriteService {
                                 userId, orderId, amount, wallet.getBalance(), changedAt));
     }
 
+    /**
+     * 주문 가격만큼 지갑을 잠근 뒤 잔액 충분 여부와 일회용 완료 권한을 반환한다.
+     *
+     * <p>이 단계는 잔액을 바꾸지 않는다. 반환한 {@link PointPaymentLock}은 반드시 같은 트랜잭션에서 주문 ID를 얻은 뒤 {@link
+     * #completePayment(PointPaymentLock, long, long)}로 소비해야 한다.
+     */
     @Transactional(propagation = Propagation.REQUIRED)
     public PointPaymentPreparation preparePayment(long userId, long amount) {
         PointWallet wallet = lockWallet(userId, "payment");
@@ -78,6 +96,11 @@ public class PointWriteService {
         return PointPaymentPreparation.sufficient(new PointPaymentLock(wallet, amount));
     }
 
+    /**
+     * 이미 잠긴 지갑을 한 번만 차감하고 결제 원장을 주문 ID와 연결한다.
+     *
+     * <p>잠금을 획득한 영속 엔티티가 현재 트랜잭션에 계속 연결돼 있는지 확인해, 다른 트랜잭션이나 스레드에서 이전 잠금 권한을 재사용하는 것을 막는다.
+     */
     @Transactional(propagation = Propagation.REQUIRED)
     public long completePayment(PointPaymentLock paymentLock, long expectedUserId, long orderId) {
         if (!TransactionSynchronizationManager.isActualTransactionActive()) {

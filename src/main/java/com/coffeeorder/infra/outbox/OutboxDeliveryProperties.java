@@ -4,6 +4,11 @@ import java.net.URI;
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+/**
+ * Outbox HTTP 전달의 시간 제한, lease, 폴링과 worker 식별자 설정.
+ *
+ * <p>모든 duration은 양수여야 하며, base URL과 worker ID는 DB lease 및 외부 전달 경계에서 바로 사용되므로 애플리케이션 시작 시 검증한다.
+ */
 @ConfigurationProperties("outbox.delivery")
 public record OutboxDeliveryProperties(
         boolean enabled,

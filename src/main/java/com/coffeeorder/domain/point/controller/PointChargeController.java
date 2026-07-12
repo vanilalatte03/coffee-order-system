@@ -5,7 +5,7 @@ import com.coffeeorder.domain.idempotency.service.InvalidIdempotencyKeyException
 import com.coffeeorder.domain.point.dto.ChargePointsRequest;
 import com.coffeeorder.domain.point.service.ChargePointsCommand;
 import com.coffeeorder.domain.point.service.ChargePointsResult;
-import com.coffeeorder.domain.point.service.ChargePointsService;
+import com.coffeeorder.domain.point.service.PointFacade;
 import com.coffeeorder.global.observability.RequestObservability;
 import com.coffeeorder.global.observability.TraceIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,11 +33,11 @@ public class PointChargeController {
     private static final MediaType JSON_UTF8 =
             new MediaType("application", "json", StandardCharsets.UTF_8);
 
-    private final ChargePointsService chargePointsService;
+    private final PointFacade pointFacade;
     private final Clock clock;
 
-    public PointChargeController(ChargePointsService chargePointsService, Clock clock) {
-        this.chargePointsService = chargePointsService;
+    public PointChargeController(PointFacade pointFacade, Clock clock) {
+        this.pointFacade = pointFacade;
         this.clock = clock;
     }
 
@@ -53,7 +53,7 @@ public class PointChargeController {
         RequestObservability.user(servletRequest, userId);
         validateKey(idempotencyKey);
         ChargePointsResult result =
-                chargePointsService.charge(
+                pointFacade.charge(
                         new ChargePointsCommand(userId, request.amount(), idempotencyKey),
                         clock.instant(),
                         TraceIdFilter.getTraceId(servletRequest));

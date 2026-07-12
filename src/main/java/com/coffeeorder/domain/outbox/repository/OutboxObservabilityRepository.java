@@ -11,6 +11,11 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * 사용자 트랜잭션과 분리해 Outbox 상태를 관측하는 읽기 전용 repository.
+ *
+ * <p>메트릭 수집이 비즈니스 트랜잭션의 연결·격리 수준·rollback 상태에 영향을 주지 않도록 매 호출을 새 읽기 트랜잭션에서 실행한다.
+ */
 @Repository
 public class OutboxObservabilityRepository {
 
@@ -38,6 +43,7 @@ public class OutboxObservabilityRepository {
         return count == null ? 0 : count;
     }
 
+    /** 아직 발행되지 않은 가장 오래된 이벤트가 대기한 시간을 초 단위로 반환한다. */
     public double oldestPendingWaitSeconds() {
         Instant createdAt =
                 readTransaction.execute(

@@ -14,7 +14,7 @@ import com.coffeeorder.domain.idempotency.entity.IdempotencyOperation;
 import com.coffeeorder.domain.idempotency.repository.IdempotencyRequestRepository;
 import com.coffeeorder.domain.point.service.PointWriteService;
 import com.coffeeorder.domain.user.service.UserNotFoundException;
-import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.domain.user.service.UserService;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
@@ -24,6 +24,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -34,6 +35,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @SpringBootTest
+@DisplayName("멱등성 실행기 통합 테스트")
 class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final CanonicalPayload CHARGE_100 =
@@ -43,7 +45,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private IdempotencyExecutor idempotencyExecutor;
     @Autowired private PointWriteService pointWriteService;
-    @Autowired private ValidateUserService validateUserService;
+    @Autowired private UserService userService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @MockitoSpyBean private IdempotencyRequestWriter idempotencyRequestWriter;
     @MockitoSpyBean private IdempotencyRequestRepository idempotencyRequestRepository;
@@ -58,6 +60,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE point_wallets SET balance = 0, updated_at = UTC_TIMESTAMP(6)");
     }
 
+    @DisplayName("같은 범위와 해시는 최초 성공 스냅샷을 재생한다")
     @Test
     void 같은_범위와_hash는_최초_성공_snapshot을_재생한다() {
         AtomicInteger executions = new AtomicInteger();
@@ -92,6 +95,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isEqualTo(1);
     }
 
+    @DisplayName("같은 범위의 다른 해시는 키 재사용 충돌이다")
     @Test
     void 같은_범위의_다른_hash는_키_재사용_충돌이다() {
         executeCharge(10, "reused-key", CHARGE_100, () -> success(100));
@@ -106,6 +110,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                 .isInstanceOf(IdempotencyKeyReusedException.class);
     }
 
+    @DisplayName("작업과 사용자가 다르면 같은 키를 독립적으로 사용한다")
     @Test
     void operation과_사용자가_다르면_같은_키를_독립적으로_사용한다() {
         IdempotencyExecutionResult userTen =
@@ -116,7 +121,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                         IdempotencyOperation.ORDER_CREATE,
                         "shared-key",
                         CHARGE_100,
-                        () -> validateUserService.validateExists(10),
+                        () -> userService.validateExists(10),
                         () -> success(20));
         IdempotencyExecutionResult anotherUser =
                 idempotencyExecutor.execute(
@@ -124,7 +129,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                         IdempotencyOperation.POINT_CHARGE,
                         "shared-key",
                         CanonicalPayload.fromJson("{\"amount\":100,\"userId\":20}"),
-                        () -> validateUserService.validateExists(20),
+                        () -> userService.validateExists(20),
                         () -> success(30));
         IdempotencyExecutionResult userTenReplay =
                 executeCharge(10, "shared-key", CHARGE_100, () -> success(999));
@@ -134,7 +139,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                         IdempotencyOperation.POINT_CHARGE,
                         "shared-key",
                         CanonicalPayload.fromJson("{\"amount\":100,\"userId\":20}"),
-                        () -> validateUserService.validateExists(20),
+                        () -> userService.validateExists(20),
                         () -> success(999));
 
         assertThat(List.of(userTen, anotherOperation, anotherUser))
@@ -146,6 +151,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isEqualTo(3);
     }
 
+    @DisplayName("대소문자만 다른 키는 독립적으로 실행한다")
     @Test
     void 대소문자만_다른_키는_독립적으로_실행한다() {
         IdempotencyExecutionResult upperCaseKey =
@@ -168,6 +174,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isEqualTo(2);
     }
 
+    @DisplayName("멱등 키는 허용된 문자 1자부터 128자까지만 받는다")
     @Test
     void 멱등_키는_허용된_문자_1자부터_128자까지만_받는다() {
         String maximumLengthKey = "a".repeat(128);
@@ -183,6 +190,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isEqualTo(1);
     }
 
+    @DisplayName("사용자 사전 검증 실패에는 멱등 행이 남지 않는다")
     @Test
     void 사용자_사전_검증_실패에는_멱등_행이_남지_않는다() {
         assertThatThrownBy(
@@ -193,13 +201,14 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                                         "missing-user",
                                         CanonicalPayload.fromJson(
                                                 "{\"amount\":100,\"userId\":9999}"),
-                                        () -> validateUserService.validateExists(9999),
+                                        () -> userService.validateExists(9999),
                                         () -> success(100)))
                 .isInstanceOf(UserNotFoundException.class);
 
         assertThat(idempotencyCount()).isZero();
     }
 
+    @DisplayName("일시적 예외는 업무 변경과 PROCESSING 행을 함께 롤백한다")
     @Test
     void 일시적_예외는_업무_변경과_PROCESSING_행을_함께_롤백한다() {
         assertThatThrownBy(
@@ -219,6 +228,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isZero();
     }
 
+    @DisplayName("결정적 오류는 업무 쓰기 없이 안정 페이로드만 재생한다")
     @Test
     void 결정적_오류는_업무_쓰기_없이_안정_payload만_재생한다() {
         IdempotencyResponseSnapshot error =
@@ -246,6 +256,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(ledgerCount()).isZero();
     }
 
+    @DisplayName("객체가 아닌 결정적 오류 페이로드는 업무와 PROCESSING을 롤백한다")
     @ParameterizedTest
     @ValueSource(strings = {"[]", "\"error\"", "42", "null"})
     void 객체가_아닌_결정적_오류_payload는_업무와_PROCESSING을_롤백한다(String invalidBody) {
@@ -268,6 +279,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isZero();
     }
 
+    @DisplayName("COMPLETED 스냅샷 플러시 실패는 업무와 PROCESSING을 모두 롤백한다")
     @Test
     void COMPLETED_snapshot_flush_실패는_업무와_PROCESSING을_모두_롤백한다() {
         doThrow(new DataIntegrityViolationException("forced completed snapshot flush failure"))
@@ -302,6 +314,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(idempotencyCount()).isEqualTo(1);
     }
 
+    @DisplayName("동시 선점은 DB 유니크 승자 한 건만 업무를 실행한다")
     @Test
     void 동시_선점은_DB_유니크_승자_한_건만_업무를_실행한다() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -362,6 +375,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @DisplayName("동시 같은 키의 다른 해시는 승자만 실행하고 패자를 거절한다")
     @Test
     void 동시_같은_키의_다른_hash는_승자만_실행하고_패자를_거절한다() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -432,7 +446,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                 IdempotencyOperation.POINT_CHARGE,
                 key,
                 payload,
-                () -> validateUserService.validateExists(userId),
+                () -> userService.validateExists(userId),
                 work);
     }
 

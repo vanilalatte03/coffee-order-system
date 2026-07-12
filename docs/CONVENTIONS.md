@@ -25,8 +25,8 @@
 | 대상 | 규칙 | 예시 |
 | --- | --- | --- |
 | Controller | `{Feature}Controller` | `OrderController` |
-| Service | `{Action}{Feature}Service` | `PlaceOrderService`, `ChargePointService` |
-| Facade | `{Feature}Facade` | `OrderFacade` |
+| Service | `{Feature}Service` 또는 역할명 | `MenuService`, `UserService`, `OrderService`, `OutboxEventService`, `PointWriteService` |
+| Facade | `{Feature}Facade` | `OrderFacade`, `PointFacade` |
 | Repository | `{Aggregate}Repository` | `OrderRepository` |
 | 외부 연동 계약 | `{Capability}Port` 또는 역할명 | `OrderEventPublisher`, `MenuCache` |
 | 외부 연동 구현 | `{Technology}{Role}Adapter` | `HttpOrderEventPublisherAdapter`, `RedisMenuCacheAdapter` |

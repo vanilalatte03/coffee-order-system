@@ -5,11 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
 import com.coffeeorder.domain.menu.service.MenuNotOrderableException;
+import com.coffeeorder.domain.menu.service.MenuService;
 import com.coffeeorder.domain.menu.service.OrderableMenuResult;
-import com.coffeeorder.domain.menu.service.ValidateOrderableMenuService;
 import com.coffeeorder.domain.outbox.entity.OutboxStatus;
+import com.coffeeorder.domain.outbox.service.OutboxEventService;
 import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventCommand;
-import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventService;
 import com.coffeeorder.domain.outbox.service.RecordedOutboxEventResult;
 import com.coffeeorder.domain.point.service.PointWriteService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,15 +34,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @Import(OrderWriteModelIntegrationTest.FixedClockConfiguration.class)
+@DisplayName("주문 쓰기 모델 통합 테스트")
 class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant CLOCK_INSTANT = Instant.parse("2026-07-11T04:35:00.456789123Z");
     private static final Instant NORMALIZED_INSTANT = Instant.parse("2026-07-11T04:35:00.456789Z");
 
-    @Autowired private ValidateOrderableMenuService validateOrderableMenuService;
-    @Autowired private CreatePaidOrderService createPaidOrderService;
+    @Autowired private MenuService menuService;
+    @Autowired private OrderService orderService;
     @Autowired private PointWriteService pointWriteService;
-    @Autowired private RecordOrderPaidEventService recordOrderPaidEventService;
+    @Autowired private OutboxEventService outboxEventService;
     @Autowired private TransactionTemplate transactionTemplate;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private ObjectMapper objectMapper;
@@ -58,9 +60,10 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE menus SET status = 'INACTIVE' WHERE id = 4");
     }
 
+    @DisplayName("저장한 주문 ID로 같은 트랜잭션에서 결제 원장과 아웃박스를 연결한다")
     @Test
     void 저장한_주문_ID로_같은_transaction에서_PAYMENT와_Outbox를_연결한다() throws Exception {
-        OrderableMenuResult menu = validateOrderableMenuService.validate(2);
+        OrderableMenuResult menu = menuService.validateOrderable(2);
 
         WorkflowResult result = transactionTemplate.execute(status -> writeOrder(menu));
 
@@ -119,9 +122,10 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(result.outbox().nextAttemptAt()).isEqualTo(NORMALIZED_INSTANT);
     }
 
+    @DisplayName("주문 스냅샷은 저장 뒤 현재 메뉴가 바뀌어도 변하지 않는다")
     @Test
     void 주문_snapshot은_저장_뒤_현재_메뉴가_바뀌어도_변하지_않는다() {
-        OrderableMenuResult menu = validateOrderableMenuService.validate(2);
+        OrderableMenuResult menu = menuService.validateOrderable(2);
         WorkflowResult result = transactionTemplate.execute(status -> writeOrder(menu));
 
         jdbcTemplate.update("UPDATE menus SET name = '새 이름', price = 9000 WHERE id = 2");
@@ -135,9 +139,10 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
                 .containsEntry("paid_amount", 5000L);
     }
 
+    @DisplayName("비활성 메뉴는 주문 모델 생성 전에 거절한다")
     @Test
     void 비활성_메뉴는_주문_모델_생성_전에_거절한다() {
-        assertThatThrownBy(() -> validateOrderableMenuService.validate(4))
+        assertThatThrownBy(() -> menuService.validateOrderable(4))
                 .isInstanceOf(MenuNotOrderableException.class);
 
         assertThat(count("orders")).isZero();
@@ -145,9 +150,10 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("outbox_events")).isZero();
     }
 
+    @DisplayName("외부 트랜잭션 실패는 주문, 결제 원장, 아웃박스와 지갑을 모두 롤백한다")
     @Test
     void 외부_transaction_실패는_주문_PAYMENT_Outbox와_지갑을_모두_롤백한다() {
-        OrderableMenuResult menu = validateOrderableMenuService.validate(2);
+        OrderableMenuResult menu = menuService.validateOrderable(2);
 
         assertThatThrownBy(
                         () ->
@@ -164,11 +170,11 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(balanceOf(10)).isEqualTo(10000);
     }
 
+    @DisplayName("DB는 주문별 결제 원장과 ORDER_PAID 중복을 각각 거절한다")
     @Test
     void DB는_주문별_PAYMENT와_ORDER_PAID_중복을_각각_거절한다() {
         WorkflowResult result =
-                transactionTemplate.execute(
-                        status -> writeOrder(validateOrderableMenuService.validate(2)));
+                transactionTemplate.execute(status -> writeOrder(menuService.validateOrderable(2)));
 
         assertThatThrownBy(
                         () ->
@@ -184,7 +190,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
                         () ->
                                 transactionTemplate.execute(
                                         status ->
-                                                recordOrderPaidEventService.record(
+                                                outboxEventService.record(
                                                         eventCommand(result.order()))))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(count("outbox_events")).isOne();
@@ -192,10 +198,10 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     private WorkflowResult writeOrder(OrderableMenuResult menu) {
         PaidOrderResult order =
-                createPaidOrderService.create(
+                orderService.create(
                         new CreatePaidOrderCommand(10, menu.menuId(), menu.name(), menu.price()));
         long remainingBalance = pointWriteService.pay(10, order.orderId(), order.paymentAmount());
-        RecordedOutboxEventResult outbox = recordOrderPaidEventService.record(eventCommand(order));
+        RecordedOutboxEventResult outbox = outboxEventService.record(eventCommand(order));
         return new WorkflowResult(order, remainingBalance, outbox);
     }
 

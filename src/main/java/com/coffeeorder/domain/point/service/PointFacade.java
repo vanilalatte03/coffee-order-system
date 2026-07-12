@@ -7,7 +7,8 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyExecutor;
 import com.coffeeorder.domain.idempotency.service.IdempotencyResponseSnapshot;
 import com.coffeeorder.domain.point.dto.ChargePointsResponse;
 import com.coffeeorder.domain.point.entity.PointBalanceOverflowException;
-import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.domain.user.service.UserService;
+import com.coffeeorder.global.error.ErrorCode;
 import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,30 +17,38 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+/**
+ * 포인트 충전의 멱등성 경계와 HTTP 응답 snapshot 생성을 조정한다.
+ *
+ * <p>이 클래스는 트랜잭션을 직접 열지 않는다. {@link IdempotencyExecutor}가 지갑 변경과 완료 결과 저장을 같은 트랜잭션으로 묶어, 재시도 시 중복
+ * 충전 없이 최초 결과를 재생하게 한다.
+ */
 @Service
-public class ChargePointsService {
+public class PointFacade {
 
-    private static final Logger log = LoggerFactory.getLogger(ChargePointsService.class);
-
-    private static final String OVERFLOW_BODY =
-            "{\"code\":\"POINT_BALANCE_OVERFLOW\",\"message\":\"포인트 잔액이 범위를 초과합니다.\"}";
+    private static final Logger log = LoggerFactory.getLogger(PointFacade.class);
 
     private final IdempotencyExecutor idempotencyExecutor;
-    private final ValidateUserService validateUserService;
+    private final UserService userService;
     private final PointWriteService pointWriteService;
     private final ObjectMapper objectMapper;
 
-    public ChargePointsService(
+    public PointFacade(
             IdempotencyExecutor idempotencyExecutor,
-            ValidateUserService validateUserService,
+            UserService userService,
             PointWriteService pointWriteService,
             ObjectMapper objectMapper) {
         this.idempotencyExecutor = idempotencyExecutor;
-        this.validateUserService = validateUserService;
+        this.userService = userService;
         this.pointWriteService = pointWriteService;
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 포인트를 충전하고 최초 결과 또는 동일 요청의 재생 결과를 반환한다.
+     *
+     * <p>잔액 오버플로는 도메인 변경 없이 저장되는 결정적 오류이며, 사용자 없음과 일시적 저장 실패는 멱등성 결과를 남기지 않는다.
+     */
     public ChargePointsResult charge(
             ChargePointsCommand command, Instant responseTimestamp, String traceId) {
         CanonicalPayload payload =
@@ -55,7 +64,7 @@ public class ChargePointsService {
                         IdempotencyOperation.POINT_CHARGE,
                         command.idempotencyKey(),
                         payload,
-                        () -> validateUserService.validateExists(command.userId()),
+                        () -> userService.validateExists(command.userId()),
                         () -> executeCharge(command));
         IdempotencyResponseSnapshot snapshot = execution.snapshot();
         String responseBody = snapshot.responseBody(responseTimestamp, traceId);
@@ -77,7 +86,7 @@ public class ChargePointsService {
                     ChargePointsResponse.from(command.userId(), command.amount(), charged);
             return IdempotencyResponseSnapshot.success(201, writeJson(response));
         } catch (PointBalanceOverflowException exception) {
-            return IdempotencyResponseSnapshot.deterministicError(422, OVERFLOW_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.POINT_BALANCE_OVERFLOW);
         }
     }
 
