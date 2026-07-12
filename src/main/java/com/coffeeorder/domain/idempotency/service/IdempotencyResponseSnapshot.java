@@ -1,8 +1,11 @@
 package com.coffeeorder.domain.idempotency.service;
 
+import com.coffeeorder.global.error.ErrorCode;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Instant;
+import java.util.Objects;
 
 public record IdempotencyResponseSnapshot(int responseStatus, String storedBody) {
 
@@ -36,6 +39,14 @@ public record IdempotencyResponseSnapshot(int responseStatus, String storedBody)
                     "deterministic error snapshot requires non-2xx status");
         }
         return new IdempotencyResponseSnapshot(responseStatus, stableErrorPayload);
+    }
+
+    public static IdempotencyResponseSnapshot deterministicError(ErrorCode errorCode) {
+        Objects.requireNonNull(errorCode, "errorCode must not be null");
+        ObjectNode stablePayload = JsonNodeFactory.instance.objectNode();
+        stablePayload.put("code", errorCode.code());
+        stablePayload.put("message", errorCode.message());
+        return deterministicError(errorCode.status().value(), CanonicalJson.write(stablePayload));
     }
 
     public static IdempotencyResponseSnapshot restored(int responseStatus, String storedBody) {

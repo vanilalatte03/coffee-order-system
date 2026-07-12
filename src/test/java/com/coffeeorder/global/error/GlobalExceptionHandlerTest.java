@@ -170,7 +170,10 @@ class GlobalExceptionHandlerTest {
                 .contains(
                         "traceId=" + normalTrace,
                         "traceId=" + businessTrace,
-                        "traceId=" + serverTrace);
+                        "traceId=" + serverTrace,
+                        "resultCode=SUCCESS",
+                        "resultCode=" + ErrorCode.USER_NOT_FOUND.code(),
+                        "resultCode=" + ErrorCode.INTERNAL_SERVER_ERROR.code());
         assertThat(output)
                 .doesNotContain(
                         "request-body-secret",

@@ -16,6 +16,7 @@ import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventService;
 import com.coffeeorder.domain.point.service.PointPaymentPreparation;
 import com.coffeeorder.domain.point.service.PointWriteService;
 import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.global.error.ErrorCode;
 import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,13 +29,6 @@ import org.springframework.stereotype.Service;
 public class OrderFacade {
 
     private static final Logger log = LoggerFactory.getLogger(OrderFacade.class);
-
-    private static final String MENU_NOT_FOUND_BODY =
-            "{\"code\":\"MENU_NOT_FOUND\",\"message\":\"메뉴를 찾을 수 없습니다.\"}";
-    private static final String MENU_NOT_ORDERABLE_BODY =
-            "{\"code\":\"MENU_NOT_ORDERABLE\",\"message\":\"주문할 수 없는 메뉴입니다.\"}";
-    private static final String INSUFFICIENT_POINTS_BODY =
-            "{\"code\":\"INSUFFICIENT_POINTS\",\"message\":\"포인트 잔액이 부족합니다.\"}";
 
     private final IdempotencyExecutor idempotencyExecutor;
     private final ValidateUserService validateUserService;
@@ -94,15 +88,15 @@ public class OrderFacade {
         try {
             menu = validateOrderableMenuService.validate(command.menuId());
         } catch (MenuNotFoundException exception) {
-            return IdempotencyResponseSnapshot.deterministicError(404, MENU_NOT_FOUND_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.MENU_NOT_FOUND);
         } catch (MenuNotOrderableException exception) {
-            return IdempotencyResponseSnapshot.deterministicError(409, MENU_NOT_ORDERABLE_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.MENU_NOT_ORDERABLE);
         }
 
         PointPaymentPreparation payment =
                 pointWriteService.preparePayment(command.userId(), menu.price());
         if (!payment.sufficient()) {
-            return IdempotencyResponseSnapshot.deterministicError(409, INSUFFICIENT_POINTS_BODY);
+            return IdempotencyResponseSnapshot.deterministicError(ErrorCode.INSUFFICIENT_POINTS);
         }
 
         PaidOrderResult order =
