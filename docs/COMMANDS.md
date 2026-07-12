@@ -21,36 +21,32 @@ docker version
 
 ## 로컬 MySQL 시작과 종료
 
-MySQL 컨테이너는 `coffee_order` 데이터베이스와 로컬 개발 계정을 생성하고 호스트의 전용 `3307` 포트를 사용한다. 이미 같은 이름의 컨테이너나 같은 포트를 사용하는 프로세스가 있으면 먼저 종료한다.
+MySQL 컨테이너는 `compose.yml`로 `coffee_order` 데이터베이스와 로컬 개발 계정을 생성하고 호스트의 전용 `3307` 포트를 사용한다. Compose는 `.env`가 있으면 `DB_USERNAME`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`를 읽고, 없으면 로컬 기본값을 사용한다. 이미 같은 이름의 컨테이너나 같은 포트를 사용하는 프로세스가 있으면 먼저 종료한다.
 
 Windows PowerShell:
 
 ```powershell
-docker run --name coffee-order-mysql --detach --publish 3307:3306 --env MYSQL_DATABASE=coffee_order --env MYSQL_USER=coffee --env MYSQL_PASSWORD=coffee --env MYSQL_ROOT_PASSWORD=root mysql:8.0.42
-do { docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcoffee --silent; if ($LASTEXITCODE -ne 0) { Start-Sleep -Seconds 1 } } while ($LASTEXITCODE -ne 0)
+docker compose up -d --wait mysql
 ```
 
 POSIX 셸(Linux, macOS, WSL):
 
 ```sh
-docker run --name coffee-order-mysql --detach --publish 3307:3306 --env MYSQL_DATABASE=coffee_order --env MYSQL_USER=coffee --env MYSQL_PASSWORD=coffee --env MYSQL_ROOT_PASSWORD=root mysql:8.0.42
-until docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcoffee --silent; do sleep 1; done
+docker compose up -d --wait mysql
 ```
 
-`mysqld is alive`가 출력되면 준비가 끝난 것이다. 애플리케이션 종료 후 컨테이너를 중지하고 제거한다.
+명령이 성공하고 컨테이너가 `healthy` 상태가 되면 준비가 끝난 것이다. 애플리케이션 종료 후 컨테이너를 중지하고 제거한다.
 
 Windows PowerShell:
 
 ```powershell
-docker stop coffee-order-mysql
-docker rm coffee-order-mysql
+docker compose down
 ```
 
 POSIX 셸(Linux, macOS, WSL):
 
 ```sh
-docker stop coffee-order-mysql
-docker rm coffee-order-mysql
+docker compose down
 ```
 
 ## Git hook 설정
@@ -111,18 +107,12 @@ POSIX 셸(Linux, macOS, WSL):
 Windows PowerShell:
 
 ```powershell
-$env:DB_URL = 'jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
-$env:DB_USERNAME = 'coffee'
-$env:DB_PASSWORD = 'coffee'
 .\gradlew.bat bootRun
 ```
 
 POSIX 셸(Linux, macOS, WSL):
 
 ```sh
-export DB_URL='jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
-export DB_USERNAME='coffee'
-export DB_PASSWORD='coffee'
 ./gradlew bootRun
 ```
 
@@ -142,7 +132,13 @@ curl --fail --silent --show-error http://localhost:8080/actuator/health
 
 실행 경로나 런타임 설정을 변경했다면 테스트뿐 아니라 애플리케이션 기동과 Health endpoint도 확인한다.
 
-`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`를 생략하면 위 로컬 개발값을 기본값으로 사용한다. Flyway가 migration을 적용하고 Hibernate `ddl-auto=validate`가 스키마를 검증한다. JDBC 연결은 `connectionTimeZone=UTC`와 `forceConnectionTimeZoneToSession=true`로 세션 타임존을 UTC에 고정한다.
+애플리케이션은 저장소 루트의 `.env`를 선택적으로 읽는다. `.env`가 없거나 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`를 생략하면 로컬 개발값을 기본값으로 사용한다. Flyway가 migration을 적용하고 Hibernate `ddl-auto=validate`가 스키마를 검증한다. JDBC 연결은 `connectionTimeZone=UTC`와 `forceConnectionTimeZoneToSession=true`로 세션 타임존을 UTC에 고정한다.
+
+## IntelliJ 수동 HTTP 시나리오
+
+MySQL과 애플리케이션을 실행한 뒤 `src/test/http/coffee-order-happy-path.http`를 IntelliJ에서 열고 **Run All Requests in File**을 실행한다. 개별 요청은 파일 위에서 아래 순서로 실행한다.
+
+시나리오는 Health, 활성 메뉴, 포인트 충전과 멱등 재요청, 주문·결제와 멱등 재요청, 인기 메뉴 반영을 차례로 검증한다. 자세한 실행 방법과 상태 변화는 `src/test/http/README.md`를 따른다.
 
 ## 테스트와 전체 검증
 

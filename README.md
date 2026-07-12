@@ -29,29 +29,19 @@ Docker daemon 가동 여부 확인, Git hook 설정, 코드 포맷, Windows Powe
 
 ### 로컬 MySQL과 애플리케이션 실행
 
-먼저 `docker version` 출력에 `Server` 섹션이 있는지 확인합니다. 아래 명령은 `coffee-order-mysql` 컨테이너를 만들고 MySQL 준비 상태를 확인합니다.
+먼저 `docker version` 출력에 `Server` 섹션이 있는지 확인합니다. 아래 명령은 `compose.yml`로 `coffee-order-mysql` 컨테이너를 만들고 MySQL이 준비될 때까지 기다린 뒤 애플리케이션을 실행합니다. 로컬 값을 바꾸려면 `.env.example`을 `.env`로 복사해 수정합니다.
 
 Windows PowerShell:
 
 ```powershell
-docker run --name coffee-order-mysql --detach --publish 3307:3306 --env MYSQL_DATABASE=coffee_order --env MYSQL_USER=coffee --env MYSQL_PASSWORD=coffee --env MYSQL_ROOT_PASSWORD=root mysql:8.0.42
-do { docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcoffee --silent; if ($LASTEXITCODE -ne 0) { Start-Sleep -Seconds 1 } } while ($LASTEXITCODE -ne 0)
-$env:DB_URL = 'jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
-$env:DB_USERNAME = 'coffee'
-$env:DB_PASSWORD = 'coffee'
-$env:DATA_PLATFORM_BASE_URL = 'http://localhost:9090'
+docker compose up -d --wait mysql
 .\gradlew.bat bootRun
 ```
 
 POSIX 셸(Linux, macOS, WSL):
 
 ```sh
-docker run --name coffee-order-mysql --detach --publish 3307:3306 --env MYSQL_DATABASE=coffee_order --env MYSQL_USER=coffee --env MYSQL_PASSWORD=coffee --env MYSQL_ROOT_PASSWORD=root mysql:8.0.42
-until docker exec coffee-order-mysql mysqladmin ping -h 127.0.0.1 -ucoffee -pcoffee --silent; do sleep 1; done
-export DB_URL='jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
-export DB_USERNAME='coffee'
-export DB_PASSWORD='coffee'
-export DATA_PLATFORM_BASE_URL='http://localhost:9090'
+docker compose up -d --wait mysql
 ./gradlew bootRun
 ```
 
@@ -61,16 +51,14 @@ Windows PowerShell:
 
 ```powershell
 Invoke-RestMethod http://localhost:8080/actuator/health
-docker stop coffee-order-mysql
-docker rm coffee-order-mysql
+docker compose down
 ```
 
 POSIX 셸(Linux, macOS, WSL):
 
 ```sh
 curl --fail --silent --show-error http://localhost:8080/actuator/health
-docker stop coffee-order-mysql
-docker rm coffee-order-mysql
+docker compose down
 ```
 
 ### IntelliJ에서 실행
@@ -78,8 +66,9 @@ docker rm coffee-order-mysql
 1. IntelliJ에서 이 저장소의 루트 폴더를 엽니다.
 2. Gradle 프로젝트 가져오기가 끝날 때까지 기다립니다.
 3. Project SDK와 Gradle JVM이 JDK 21인지 확인합니다.
-4. `CoffeeOrderSystemApplication`의 `main` 메서드를 실행합니다.
-5. 브라우저에서 [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)를 열어 `{"status":"UP"}`을 확인합니다.
+4. 터미널에서 `docker compose up -d --wait mysql`을 실행합니다.
+5. `CoffeeOrderSystemApplication`의 `main` 메서드를 실행합니다.
+6. 브라우저에서 [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)를 열어 `{"status":"UP"}`을 확인합니다.
 
 Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
 
