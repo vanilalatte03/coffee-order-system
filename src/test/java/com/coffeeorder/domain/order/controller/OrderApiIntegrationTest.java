@@ -17,6 +17,7 @@ import com.coffeeorder.domain.order.service.CreateOrderResult;
 import com.coffeeorder.domain.order.service.OrderFacade;
 import com.coffeeorder.domain.outbox.entity.OutboxEvent;
 import com.coffeeorder.domain.outbox.repository.OutboxEventRepository;
+import com.coffeeorder.global.observability.TraceIdFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -37,6 +38,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -233,14 +235,35 @@ class OrderApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     private void assertDeterministicError(String key, long menuId, int status, String code)
             throws Exception {
-        mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
-                .andExpect(status().is(status))
-                .andExpect(header().string("Idempotency-Replayed", "false"))
-                .andExpect(jsonPath("$.code").value(code));
-        mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
-                .andExpect(status().is(status))
-                .andExpect(header().string("Idempotency-Replayed", "true"))
-                .andExpect(jsonPath("$.code").value(code));
+        MvcResult first =
+                mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
+                        .andExpect(status().is(status))
+                        .andExpect(header().string("Idempotency-Replayed", "false"))
+                        .andExpect(jsonPath("$.code").value(code))
+                        .andReturn();
+        MvcResult replay =
+                mockMvc.perform(order(key, "{\"userId\":10,\"menuId\":" + menuId + "}"))
+                        .andExpect(status().is(status))
+                        .andExpect(header().string("Idempotency-Replayed", "true"))
+                        .andExpect(jsonPath("$.code").value(code))
+                        .andReturn();
+
+        var firstBody = objectMapper.readTree(first.getResponse().getContentAsByteArray());
+        var replayBody = objectMapper.readTree(replay.getResponse().getContentAsByteArray());
+        String firstTraceId = firstBody.path("traceId").asText();
+        String replayTraceId = replayBody.path("traceId").asText();
+
+        assertThat(firstTraceId)
+                .isNotBlank()
+                .isEqualTo(first.getResponse().getHeader(TraceIdFilter.TRACE_ID_HEADER));
+        assertThat(replayTraceId)
+                .isNotBlank()
+                .isEqualTo(replay.getResponse().getHeader(TraceIdFilter.TRACE_ID_HEADER))
+                .isNotEqualTo(firstTraceId);
+        assertThat(replayBody.path("message").asText())
+                .isEqualTo(firstBody.path("message").asText());
+        assertThat(Instant.parse(replayBody.path("timestamp").asText()))
+                .isNotEqualTo(Instant.parse(firstBody.path("timestamp").asText()));
     }
 
     private CreateOrderResult perform(String key, long menuId) {
