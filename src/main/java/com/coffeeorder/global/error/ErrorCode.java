@@ -2,6 +2,7 @@ package com.coffeeorder.global.error;
 
 import org.springframework.http.HttpStatus;
 
+/** 외부 응답에 노출해도 되는 안정 오류 코드·HTTP 상태·사용자 메시지의 단일 목록. */
 public enum ErrorCode {
     VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "요청 값이 올바르지 않습니다."),
     IDEMPOTENCY_KEY_REQUIRED(HttpStatus.BAD_REQUEST, "Idempotency-Key 헤더가 필요합니다."),

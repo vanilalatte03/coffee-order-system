@@ -11,6 +11,12 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.Objects;
 
+/**
+ * 결제 완료된 주문의 불변 결제 snapshot.
+ *
+ * <p>Phase 1은 수량 1개만 지원하며, 결제 시점의 메뉴 이름·단가와 동일한 금액을 저장한다. 이후 현재 메뉴의 이름이나 가격이 바뀌어도 과거 주문을 다시 계산하지
+ * 않는다.
+ */
 @Entity
 @Table(name = "orders")
 public class Order {
@@ -73,6 +79,11 @@ public class Order {
         this.createdAt = paidAt;
     }
 
+    /**
+     * 수량 1개로 즉시 결제 완료된 주문을 만든다.
+     *
+     * <p>호출자는 주문 가능 여부를 검증한 현재 메뉴의 이름과 가격을 넘기며, 이 값은 이후 메뉴 변경과 독립적으로 보존된다.
+     */
     public static Order paid(
             long userId, long menuId, String menuNameSnapshot, long unitPrice, Instant paidAt) {
         return new Order(userId, menuId, menuNameSnapshot, unitPrice, paidAt);

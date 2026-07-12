@@ -4,6 +4,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Controller와 예외 처리기가 request attribute로 공통 관측 컨텍스트를 전달하는 도우미.
+ *
+ * <p>오류 응답 본문에서는 안정 오류 코드만 추출해 Filter의 요청 로그와 메트릭 tag에 사용한다.
+ */
 public final class RequestObservability {
 
     static final String RESULT_CODE_ATTRIBUTE =
@@ -32,6 +37,7 @@ public final class RequestObservability {
         result(request, resultCode(status, body));
     }
 
+    /** 성공은 공통 성공 코드로, 오류는 JSON의 안정 오류 코드로 정규화한다. */
     public static String resultCode(int status, String body) {
         if (status < 400) {
             return "SUCCESS";

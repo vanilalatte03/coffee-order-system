@@ -11,6 +11,12 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.Objects;
 
+/**
+ * 지갑 잔액 변경의 불변 원장.
+ *
+ * <p>충전은 주문과 무관하고, 결제 원장은 정확히 하나의 주문 ID를 갖는다. 주문 Entity 연관 대신 scalar {@code orderId}를 써서 포인트 원장이 주문
+ * aggregate를 선행 의존하지 않게 한다.
+ */
 @Entity
 @Table(name = "point_transactions")
 public class PointTransaction {

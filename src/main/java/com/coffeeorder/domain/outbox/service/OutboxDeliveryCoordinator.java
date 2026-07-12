@@ -17,6 +17,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * Outbox 이벤트를 짧게 선점하고, 트랜잭션 밖에서 발행한 뒤 조건부로 결과를 반영한다.
+ *
+ * <p>한 이벤트는 lease와 {@code claimToken}으로 소유한다. 따라서 네트워크 호출 중에는 DB 락을 잡지 않으며, lease를 잃은 이전 작업자의 늦은
+ * 결과는 새 소유자의 상태를 덮어쓰지 못한다. 전달 보장은 at-least-once이므로 수신자는 {@code eventId}로 중복을 제거해야 한다.
+ */
 public class OutboxDeliveryCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxDeliveryCoordinator.class);
@@ -75,6 +81,12 @@ public class OutboxDeliveryCoordinator {
         this.metrics = Objects.requireNonNull(metrics);
     }
 
+    /**
+     * 현재 처리 가능한 이벤트 하나를 선점해 발행하고 결과를 반영한다.
+     *
+     * <p>{@code true}는 이벤트를 선점했거나 시도 한도 초과 이벤트를 격리했다는 뜻이다. {@code false}는 이번 시점에 처리 가능한 이벤트가 없다는
+     * 뜻이다. 호출자는 {@code false}가 나올 때까지 반복할 수 있다.
+     */
     public boolean dispatchNext(String workerId) {
         if (workerId == null || workerId.isBlank() || workerId.length() > 100) {
             throw new IllegalArgumentException("worker id must be between 1 and 100 characters");
@@ -119,6 +131,12 @@ public class OutboxDeliveryCoordinator {
         return true;
     }
 
+    /**
+     * 짧은 트랜잭션 안에서 다음 후보를 lease로 선점하거나, 만료된 마지막 시도를 격리한다.
+     *
+     * <p>이미 11회 선점된 {@code PROCESSING} 이벤트는 외부 호출을 한 번 더 하지 않고 {@code FAILED}로 전이한다. 그 외 후보는 새
+     * claim token을 발급하고 시도 횟수를 증가시킨다.
+     */
     private ClaimOutcome claimNext(String workerId, Instant eligibilityAt) {
         Optional<LockedCandidate> locked =
                 repository.lockNextCandidate(eligibilityAt, MAX_ATTEMPTS);
@@ -160,6 +178,11 @@ public class OutboxDeliveryCoordinator {
                         candidate.createdAt()));
     }
 
+    /**
+     * 발행 결과를 선점 당시의 claim token과 함께 비교해 반영한다.
+     *
+     * <p>갱신 행 수가 0이면 lease가 만료돼 다른 작업자가 회수한 것이므로 결과를 무시한다.
+     */
     private boolean applyResult(
             ClaimedOrderEvent event, OrderEventPublishResult result, Instant completedAt) {
         int updatedRows =

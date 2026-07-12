@@ -29,6 +29,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+/**
+ * 내부 예외를 공개 API의 안정 오류 코드와 재시도 의미로 변환한다.
+ *
+ * <p>SQL 문장·예외 메시지·stack trace는 응답에 노출하지 않는다. DB 잠금·연결 문제처럼 클라이언트 재시도가 가능한 경우에만 {@code
+ * Retry-After}를 추가한다.
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -127,6 +133,7 @@ public class GlobalExceptionHandler {
         return concurrencyTimeoutResponse(request);
     }
 
+    /** DB 예외 원인 사슬을 분류해 잠금 경합, 일시적 연결 장애, 알 수 없는 서버 오류를 구분한다. */
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ErrorResponse> handleDatabaseFailure(
             DataAccessException exception, HttpServletRequest request) {

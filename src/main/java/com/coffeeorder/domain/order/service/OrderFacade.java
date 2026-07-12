@@ -25,6 +25,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+/**
+ * 주문·결제의 멱등성 경계와 도메인 쓰기 순서를 조정한다.
+ *
+ * <p>메뉴 검증, 지갑 잠금, 주문·원장·Outbox 기록과 완료 응답 저장은 {@link IdempotencyExecutor}가 하나의 쓰기 트랜잭션으로 묶는다. 외부
+ * 데이터 플랫폼 호출은 이 흐름에 포함하지 않고 Outbox에만 기록한다.
+ */
 @Service
 public class OrderFacade {
 
@@ -55,6 +61,12 @@ public class OrderFacade {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 메뉴 한 개를 수량 1개로 결제하고 최초 결과 또는 재생 결과를 반환한다.
+     *
+     * <p>최초 실행의 순서는 메뉴 검증, 지갑 잠금·잔액 확인, {@code PAID} 주문 저장, 포인트 차감 원장, {@code ORDER_PAID} Outbox
+     * 기록이다. 메뉴 오류와 잔액 부족은 도메인 쓰기 없이 결정적 오류 snapshot으로 완료되며, 저장 실패는 전체 트랜잭션을 롤백한다.
+     */
     public CreateOrderResult create(
             CreateOrderCommand command, Instant responseTimestamp, String traceId) {
         CanonicalPayload payload =

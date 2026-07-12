@@ -12,6 +12,11 @@ import java.util.Objects;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+/**
+ * 주문 커밋과 원자적으로 저장되는 외부 전달용 내구성 이벤트.
+ *
+ * <p>payload는 발행 시 다시 계산하지 않는 불변 snapshot이며, 상태·시도 횟수·lease 정보는 작업자가 전달을 재개하거나 격리하는 데 사용한다.
+ */
 @Entity
 @Table(
         name = "outbox_events",
@@ -91,6 +96,11 @@ public class OutboxEvent {
         this.updatedAt = occurredAt;
     }
 
+    /**
+     * V1의 유일한 Outbox 계약인 {@code ORDER_PAID} 이벤트를 대기 상태로 만든다.
+     *
+     * <p>{@code occurredAt}은 주문의 {@code paidAt}과 같은 시각이며 첫 발행 예약 시각으로도 사용한다.
+     */
     public static OutboxEvent orderPaid(
             String eventId, long orderId, String payload, Instant occurredAt) {
         return new OutboxEvent(eventId, orderId, payload, occurredAt);
