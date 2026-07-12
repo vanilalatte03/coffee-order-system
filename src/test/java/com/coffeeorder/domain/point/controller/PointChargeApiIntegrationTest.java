@@ -16,7 +16,7 @@ import com.coffeeorder.MySqlIntegrationTestSupport;
 import com.coffeeorder.domain.idempotency.service.IdempotencyRequestWriter;
 import com.coffeeorder.domain.point.service.ChargePointsCommand;
 import com.coffeeorder.domain.point.service.ChargePointsResult;
-import com.coffeeorder.domain.point.service.ChargePointsService;
+import com.coffeeorder.domain.point.service.PointFacade;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -47,7 +47,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
     @Autowired private MockMvc mockMvc;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private DataSource dataSource;
-    @Autowired private ChargePointsService chargePointsService;
+    @Autowired private PointFacade pointFacade;
     @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private IdempotencyRequestWriter idempotencyRequestWriter;
 
@@ -170,7 +170,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
                         executor.submit(
                                 () -> {
                                     barrier.await(10, SECONDS);
-                                    return chargePointsService.charge(
+                                    return pointFacade.charge(
                                             new ChargePointsCommand(10, 100, "concurrent-20"),
                                             Instant.parse("2026-07-11T00:00:00Z"),
                                             "trace-" + requestIndex);
@@ -311,7 +311,7 @@ class PointChargeApiIntegrationTest extends MySqlIntegrationTestSupport {
 
     private ChargePointsResult performCharge(String key, long amount) {
         int traceSequence = idempotencyCount() + 1;
-        return chargePointsService.charge(
+        return pointFacade.charge(
                 new ChargePointsCommand(10, amount, key),
                 Instant.parse("2026-07-11T00:00:0" + traceSequence + "Z"),
                 "trace-" + traceSequence);

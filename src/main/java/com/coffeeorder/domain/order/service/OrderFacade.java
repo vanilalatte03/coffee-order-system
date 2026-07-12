@@ -11,11 +11,11 @@ import com.coffeeorder.domain.menu.service.OrderableMenuResult;
 import com.coffeeorder.domain.menu.service.ValidateOrderableMenuService;
 import com.coffeeorder.domain.order.dto.CreateOrderResponse;
 import com.coffeeorder.domain.order.dto.OrderMenuResponse;
+import com.coffeeorder.domain.outbox.service.OutboxEventService;
 import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventCommand;
-import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventService;
 import com.coffeeorder.domain.point.service.PointPaymentPreparation;
 import com.coffeeorder.domain.point.service.PointWriteService;
-import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.domain.user.service.UserService;
 import com.coffeeorder.global.error.ErrorCode;
 import com.coffeeorder.global.observability.RequestObservability;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -31,27 +31,27 @@ public class OrderFacade {
     private static final Logger log = LoggerFactory.getLogger(OrderFacade.class);
 
     private final IdempotencyExecutor idempotencyExecutor;
-    private final ValidateUserService validateUserService;
+    private final UserService userService;
     private final ValidateOrderableMenuService validateOrderableMenuService;
     private final PointWriteService pointWriteService;
-    private final CreatePaidOrderService createPaidOrderService;
-    private final RecordOrderPaidEventService recordOrderPaidEventService;
+    private final OrderService orderService;
+    private final OutboxEventService outboxEventService;
     private final ObjectMapper objectMapper;
 
     public OrderFacade(
             IdempotencyExecutor idempotencyExecutor,
-            ValidateUserService validateUserService,
+            UserService userService,
             ValidateOrderableMenuService validateOrderableMenuService,
             PointWriteService pointWriteService,
-            CreatePaidOrderService createPaidOrderService,
-            RecordOrderPaidEventService recordOrderPaidEventService,
+            OrderService orderService,
+            OutboxEventService outboxEventService,
             ObjectMapper objectMapper) {
         this.idempotencyExecutor = idempotencyExecutor;
-        this.validateUserService = validateUserService;
+        this.userService = userService;
         this.validateOrderableMenuService = validateOrderableMenuService;
         this.pointWriteService = pointWriteService;
-        this.createPaidOrderService = createPaidOrderService;
-        this.recordOrderPaidEventService = recordOrderPaidEventService;
+        this.orderService = orderService;
+        this.outboxEventService = outboxEventService;
         this.objectMapper = objectMapper;
     }
 
@@ -70,7 +70,7 @@ public class OrderFacade {
                         IdempotencyOperation.ORDER_CREATE,
                         command.idempotencyKey(),
                         payload,
-                        () -> validateUserService.validateExists(command.userId()),
+                        () -> userService.validateExists(command.userId()),
                         () -> executeOrder(command, traceId));
         IdempotencyResponseSnapshot snapshot = execution.snapshot();
         String responseBody = snapshot.responseBody(responseTimestamp, traceId);
@@ -100,13 +100,13 @@ public class OrderFacade {
         }
 
         PaidOrderResult order =
-                createPaidOrderService.create(
+                orderService.create(
                         new CreatePaidOrderCommand(
                                 command.userId(), menu.menuId(), menu.name(), menu.price()));
         long remainingBalance =
                 pointWriteService.completePayment(
                         payment.paymentLock(), order.userId(), order.orderId());
-        recordOrderPaidEventService.record(
+        outboxEventService.record(
                 new RecordOrderPaidEventCommand(
                         order.orderId(),
                         order.userId(),

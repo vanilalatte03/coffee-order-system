@@ -14,7 +14,7 @@ import com.coffeeorder.domain.idempotency.entity.IdempotencyOperation;
 import com.coffeeorder.domain.idempotency.repository.IdempotencyRequestRepository;
 import com.coffeeorder.domain.point.service.PointWriteService;
 import com.coffeeorder.domain.user.service.UserNotFoundException;
-import com.coffeeorder.domain.user.service.ValidateUserService;
+import com.coffeeorder.domain.user.service.UserService;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
@@ -43,7 +43,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private IdempotencyExecutor idempotencyExecutor;
     @Autowired private PointWriteService pointWriteService;
-    @Autowired private ValidateUserService validateUserService;
+    @Autowired private UserService userService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @MockitoSpyBean private IdempotencyRequestWriter idempotencyRequestWriter;
     @MockitoSpyBean private IdempotencyRequestRepository idempotencyRequestRepository;
@@ -116,7 +116,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                         IdempotencyOperation.ORDER_CREATE,
                         "shared-key",
                         CHARGE_100,
-                        () -> validateUserService.validateExists(10),
+                        () -> userService.validateExists(10),
                         () -> success(20));
         IdempotencyExecutionResult anotherUser =
                 idempotencyExecutor.execute(
@@ -124,7 +124,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                         IdempotencyOperation.POINT_CHARGE,
                         "shared-key",
                         CanonicalPayload.fromJson("{\"amount\":100,\"userId\":20}"),
-                        () -> validateUserService.validateExists(20),
+                        () -> userService.validateExists(20),
                         () -> success(30));
         IdempotencyExecutionResult userTenReplay =
                 executeCharge(10, "shared-key", CHARGE_100, () -> success(999));
@@ -134,7 +134,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                         IdempotencyOperation.POINT_CHARGE,
                         "shared-key",
                         CanonicalPayload.fromJson("{\"amount\":100,\"userId\":20}"),
-                        () -> validateUserService.validateExists(20),
+                        () -> userService.validateExists(20),
                         () -> success(999));
 
         assertThat(List.of(userTen, anotherOperation, anotherUser))
@@ -193,7 +193,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                                         "missing-user",
                                         CanonicalPayload.fromJson(
                                                 "{\"amount\":100,\"userId\":9999}"),
-                                        () -> validateUserService.validateExists(9999),
+                                        () -> userService.validateExists(9999),
                                         () -> success(100)))
                 .isInstanceOf(UserNotFoundException.class);
 
@@ -432,7 +432,7 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
                 IdempotencyOperation.POINT_CHARGE,
                 key,
                 payload,
-                () -> validateUserService.validateExists(userId),
+                () -> userService.validateExists(userId),
                 work);
     }
 

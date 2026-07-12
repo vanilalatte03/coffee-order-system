@@ -17,15 +17,15 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class RecordOrderPaidEventService {
+public class OutboxEventService {
 
-    private static final Logger log = LoggerFactory.getLogger(RecordOrderPaidEventService.class);
+    private static final Logger log = LoggerFactory.getLogger(OutboxEventService.class);
 
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
 
-    public RecordOrderPaidEventService(
+    public OutboxEventService(
             OutboxEventRepository outboxEventRepository,
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher) {
