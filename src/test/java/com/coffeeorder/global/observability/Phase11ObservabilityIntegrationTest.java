@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.coffeeorder.MySqlIntegrationTestSupport;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -19,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@DisplayName("1단계 관측성 통합 테스트")
 class Phase11ObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private MockMvc mockMvc;
@@ -34,6 +36,7 @@ class Phase11ObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE point_wallets SET balance = 0 WHERE user_id = 10");
     }
 
+    @DisplayName("API, 멱등성, 인기 조회를 저카디널리티 태그로 계측한다")
     @Test
     void API와_멱등성과_인기_query를_저카디널리티_태그로_계측한다() throws Exception {
         double firstBefore = idempotencyCount("first");
@@ -73,6 +76,7 @@ class Phase11ObservabilityIntegrationTest extends MySqlIntegrationTestSupport {
                 .isNull();
     }
 
+    @DisplayName("Actuator는 사용자 지정 메트릭만 조회하고 민감한 엔드포인트는 노출하지 않는다")
     @Test
     void Actuator는_custom_metric만_조회하고_민감_endpoint는_노출하지_않는다() throws Exception {
         mockMvc.perform(get("/api/v1/menus")).andExpect(status().isOk());

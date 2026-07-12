@@ -3,11 +3,14 @@ package com.coffeeorder.global.error;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.groups.Tuple.tuple;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
+@DisplayName("오류 코드")
 class ErrorCodeTest {
 
+    @DisplayName("1단계 공개 오류의 HTTP 상태 코드와 기본 메시지를 정의한다")
     @Test
     void Phase_1_공개_오류의_HTTP_상태_코드_기본_메시지를_정의한다() {
         assertThat(ErrorCode.values())

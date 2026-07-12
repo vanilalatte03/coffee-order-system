@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -32,6 +33,7 @@ import org.springframework.test.web.servlet.MockMvc;
         })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@DisplayName("커밋 후 아웃박스 연결 통합 테스트")
 class OutboxAfterCommitWiringIntegrationTest extends EnabledOutboxIntegrationTestSupport {
 
     private static final OrderEventHttpStub HTTP_STUB = new OrderEventHttpStub();
@@ -63,6 +65,7 @@ class OutboxAfterCommitWiringIntegrationTest extends EnabledOutboxIntegrationTes
         HTTP_STUB.close();
     }
 
+    @DisplayName("주문 커밋은 작업자를 직접 호출하지 않고 운영 주기를 깨운다")
     @Test
     void orderCommitWakesProductionCycleWithoutCallingTheWorkerDirectly() throws Exception {
         mockMvc.perform(orderRequest("after-commit-success")).andExpect(status().isCreated());
@@ -84,6 +87,7 @@ class OutboxAfterCommitWiringIntegrationTest extends EnabledOutboxIntegrationTes
                 .isEqualTo(eventId);
     }
 
+    @DisplayName("데이터 플랫폼 실패는 커밋된 주문 응답을 변경하지 않는다")
     @Test
     void dataPlatformFailureDoesNotChangeTheCommittedOrderResponse() throws Exception {
         HTTP_STUB.respondWith(503);
@@ -104,6 +108,7 @@ class OutboxAfterCommitWiringIntegrationTest extends EnabledOutboxIntegrationTes
                 .isEqualTo(5000);
     }
 
+    @DisplayName("차단된 데이터 플랫폼은 커밋된 생성 응답을 지연시키지 않는다")
     @Test
     void blockedDataPlatformDoesNotDelayTheCommittedCreatedResponse() throws Exception {
         CountDownLatch requestEntered = new CountDownLatch(1);

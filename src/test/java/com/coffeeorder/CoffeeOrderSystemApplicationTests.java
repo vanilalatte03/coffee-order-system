@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.Set;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,6 +13,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest
+@DisplayName("애플리케이션 및 데이터베이스 구성")
 class CoffeeOrderSystemApplicationTests extends MySqlIntegrationTestSupport {
 
     private static final Set<String> PHASE_ONE_TABLES =
@@ -26,9 +28,11 @@ class CoffeeOrderSystemApplicationTests extends MySqlIntegrationTestSupport {
 
     @Autowired private JdbcTemplate jdbcTemplate;
 
+    @DisplayName("스프링 애플리케이션 컨텍스트를 로드한다")
     @Test
     void contextLoads() {}
 
+    @DisplayName("Flyway가 1단계 테이블과 제약 조건 및 인덱스를 생성한다")
     @Test
     void flywayCreatesAllPhaseOneTablesConstraintsAndIndexes() {
         List<String> tables =
@@ -62,6 +66,7 @@ class CoffeeOrderSystemApplicationTests extends MySqlIntegrationTestSupport {
                         "idx_outbox_aggregate");
     }
 
+    @DisplayName("초기 데이터가 사용자별 잔액 0 지갑과 두 메뉴 상태를 생성한다")
     @Test
     void seedCreatesOneZeroBalanceWalletPerUserAndBothMenuStatuses() {
         Integer users = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM users", Integer.class);
@@ -77,6 +82,7 @@ class CoffeeOrderSystemApplicationTests extends MySqlIntegrationTestSupport {
         assertThat(menuStatuses).containsExactly("ACTIVE", "INACTIVE");
     }
 
+    @DisplayName("MySQL이 핵심 검사 제약 조건을 강제한다")
     @Test
     void mysqlEnforcesCoreCheckConstraints() {
         assertThatThrownBy(
@@ -106,6 +112,7 @@ class CoffeeOrderSystemApplicationTests extends MySqlIntegrationTestSupport {
         }
     }
 
+    @DisplayName("JDBC 세션이 UTC를 사용한다")
     @Test
     void jdbcSessionUsesUtc() {
         String sessionTimeZone =

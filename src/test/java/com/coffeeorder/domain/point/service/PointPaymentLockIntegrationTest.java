@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -13,6 +14,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
+@DisplayName("포인트 결제 잠금 통합 테스트")
 class PointPaymentLockIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Autowired private PointWriteService pointWriteService;
@@ -29,6 +31,7 @@ class PointPaymentLockIntegrationTest extends MySqlIntegrationTestSupport {
                 "UPDATE point_wallets SET balance = 10000, updated_at = UTC_TIMESTAMP(6)");
     }
 
+    @DisplayName("준비와 완료를 분리한 트랜잭션에서는 분리된 토큰을 거절한다")
     @Test
     void 준비와_완료를_분리한_트랜잭션에서는_detached_token을_거부한다() {
         PointPaymentPreparation preparation = pointWriteService.preparePayment(10, 1000);
@@ -44,6 +47,7 @@ class PointPaymentLockIntegrationTest extends MySqlIntegrationTestSupport {
         assertUnchanged();
     }
 
+    @DisplayName("토큰의 사용자와 기대 사용자가 다르면 완료를 거절한다")
     @Test
     void token의_사용자와_기대_사용자가_다르면_완료를_거부한다() {
         long anotherUsersOrderId = insertPaidOrder(20);
@@ -66,6 +70,7 @@ class PointPaymentLockIntegrationTest extends MySqlIntegrationTestSupport {
         assertUnchanged();
     }
 
+    @DisplayName("같은 토큰을 두 번 완료하면 전체 트랜잭션을 롤백한다")
     @Test
     void 같은_token을_두_번_완료하면_전체_트랜잭션을_롤백한다() {
         long firstOrderId = insertPaidOrder(10);

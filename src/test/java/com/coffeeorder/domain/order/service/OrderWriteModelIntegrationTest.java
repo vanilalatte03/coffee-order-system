@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +34,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @Import(OrderWriteModelIntegrationTest.FixedClockConfiguration.class)
+@DisplayName("주문 쓰기 모델 통합 테스트")
 class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant CLOCK_INSTANT = Instant.parse("2026-07-11T04:35:00.456789123Z");
@@ -58,6 +60,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         jdbcTemplate.update("UPDATE menus SET status = 'INACTIVE' WHERE id = 4");
     }
 
+    @DisplayName("저장한 주문 ID로 같은 트랜잭션에서 결제 원장과 아웃박스를 연결한다")
     @Test
     void 저장한_주문_ID로_같은_transaction에서_PAYMENT와_Outbox를_연결한다() throws Exception {
         OrderableMenuResult menu = menuService.validateOrderable(2);
@@ -119,6 +122,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(result.outbox().nextAttemptAt()).isEqualTo(NORMALIZED_INSTANT);
     }
 
+    @DisplayName("주문 스냅샷은 저장 뒤 현재 메뉴가 바뀌어도 변하지 않는다")
     @Test
     void 주문_snapshot은_저장_뒤_현재_메뉴가_바뀌어도_변하지_않는다() {
         OrderableMenuResult menu = menuService.validateOrderable(2);
@@ -135,6 +139,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
                 .containsEntry("paid_amount", 5000L);
     }
 
+    @DisplayName("비활성 메뉴는 주문 모델 생성 전에 거절한다")
     @Test
     void 비활성_메뉴는_주문_모델_생성_전에_거절한다() {
         assertThatThrownBy(() -> menuService.validateOrderable(4))
@@ -145,6 +150,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(count("outbox_events")).isZero();
     }
 
+    @DisplayName("외부 트랜잭션 실패는 주문, 결제 원장, 아웃박스와 지갑을 모두 롤백한다")
     @Test
     void 외부_transaction_실패는_주문_PAYMENT_Outbox와_지갑을_모두_롤백한다() {
         OrderableMenuResult menu = menuService.validateOrderable(2);
@@ -164,6 +170,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(balanceOf(10)).isEqualTo(10000);
     }
 
+    @DisplayName("DB는 주문별 결제 원장과 ORDER_PAID 중복을 각각 거절한다")
     @Test
     void DB는_주문별_PAYMENT와_ORDER_PAID_중복을_각각_거절한다() {
         WorkflowResult result =

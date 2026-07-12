@@ -12,14 +12,17 @@ import com.coffeeorder.domain.menu.repository.MenuRepository;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Transactional;
 
+@DisplayName("메뉴 서비스")
 class MenuServiceTest {
 
     private final MenuRepository menuRepository = mock(MenuRepository.class);
     private final MenuService service = new MenuService(menuRepository);
 
+    @DisplayName("활성 메뉴를 ID 오름차순 조회 계약으로 요청하고 결과로 변환한다")
     @Test
     void 활성_메뉴를_ID_오름차순_조회_계약으로_요청하고_결과로_변환한다() {
         Menu firstMenu = menu(1L, "아메리카노", 4500L, MenuStatus.ACTIVE);
@@ -36,6 +39,7 @@ class MenuServiceTest {
         verify(menuRepository).findAllByStatusOrderByIdAsc(MenuStatus.ACTIVE);
     }
 
+    @DisplayName("활성 메뉴를 주문 가능한 서비스 결과로 변환한다")
     @Test
     void 활성_메뉴는_주문_가능한_서비스_결과로_변환한다() {
         Menu activeMenu = menu(2L, "카페라떼", 5000L, MenuStatus.ACTIVE);
@@ -47,6 +51,7 @@ class MenuServiceTest {
         verify(menuRepository).findById(2L);
     }
 
+    @DisplayName("없는 메뉴는 메뉴 없음 예외를 반환한다")
     @Test
     void 없는_메뉴는_메뉴_없음_예외를_반환한다() {
         when(menuRepository.findById(999L)).thenReturn(Optional.empty());
@@ -55,6 +60,7 @@ class MenuServiceTest {
                 .isInstanceOf(MenuNotFoundException.class);
     }
 
+    @DisplayName("비활성 메뉴는 주문 불가 예외를 반환한다")
     @Test
     void 비활성_메뉴는_주문_불가_예외를_반환한다() {
         Menu inactiveMenu = menu(4L, "품절 메뉴", 6000L, MenuStatus.INACTIVE);
@@ -64,6 +70,7 @@ class MenuServiceTest {
                 .isInstanceOf(MenuNotOrderableException.class);
     }
 
+    @DisplayName("메뉴 조회와 주문 검증은 적절한 읽기 전용 트랜잭션 경계를 사용한다")
     @Test
     void 메뉴_조회와_주문_검증은_적절한_readOnly_트랜잭션_경계를_사용한다() throws NoSuchMethodException {
         Method getActiveMenus = MenuService.class.getMethod("getActiveMenus");

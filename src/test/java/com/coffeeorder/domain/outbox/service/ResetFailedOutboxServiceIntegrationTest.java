@@ -18,12 +18,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest
+@DisplayName("실패 아웃박스 재설정 통합 테스트")
 class ResetFailedOutboxServiceIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-07-11T11:00:00.654321Z");
@@ -36,6 +38,7 @@ class ResetFailedOutboxServiceIntegrationTest extends MySqlIntegrationTestSuppor
         jdbcTemplate.update("DELETE FROM outbox_events");
     }
 
+    @DisplayName("실패 이벤트만 재설정하고 오래된 토큰은 재설정을 덮어쓸 수 없다")
     @Test
     void resetsOnlyFailedAndStaleTokenCannotOverwriteReset() {
         String failed = insert("FAILED");
@@ -57,6 +60,7 @@ class ResetFailedOutboxServiceIntegrationTest extends MySqlIntegrationTestSuppor
         assertThat(row(failed)).containsEntry("status", "PENDING");
     }
 
+    @DisplayName("동시 재설정에서는 하나만 성공한다")
     @Test
     void concurrentResetHasOneWinner() throws Exception {
         String failed = insert("FAILED");

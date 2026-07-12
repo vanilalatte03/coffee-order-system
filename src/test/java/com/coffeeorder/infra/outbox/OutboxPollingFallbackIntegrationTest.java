@@ -9,6 +9,7 @@ import com.coffeeorder.EnabledOutboxIntegrationTestSupport;
 import java.time.Duration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -28,6 +29,7 @@ import org.springframework.test.web.servlet.MockMvc;
         })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@DisplayName("아웃박스 폴링 대체 경로 통합 테스트")
 class OutboxPollingFallbackIntegrationTest extends EnabledOutboxIntegrationTestSupport {
 
     private static final OrderEventHttpStub HTTP_STUB = new OrderEventHttpStub();
@@ -56,6 +58,7 @@ class OutboxPollingFallbackIntegrationTest extends EnabledOutboxIntegrationTestS
         HTTP_STUB.close();
     }
 
+    @DisplayName("커밋 후 깨우기가 억제되어도 1초 폴링이 이벤트를 찾는다")
     @Test
     void oneSecondPollingFindsTheEventWhenAfterCommitWakeupIsSuppressed() throws Exception {
         mockMvc.perform(
