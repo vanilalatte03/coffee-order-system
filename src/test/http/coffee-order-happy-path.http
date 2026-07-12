@@ -1,0 +1,159 @@
+@baseUrl = http://localhost:8080
+@userId = 10
+@menuId = 2
+@chargeAmount = 10000
+
+### 0. 애플리케이션 상태 확인
+# @name health
+GET {{baseUrl}}/actuator/health
+Accept: application/json
+
+> {%
+client.test("애플리케이션 상태가 UP이다", function () {
+    client.assert(response.status === 200, "Health 응답이 200이 아닙니다.");
+    client.assert(response.body.status === "UP", "애플리케이션 상태가 UP이 아닙니다.");
+});
+%}
+
+### 1. 활성 메뉴 목록에서 주문할 메뉴 확인
+# @name getMenus
+GET {{baseUrl}}/api/v1/menus
+Accept: application/json
+
+> {%
+client.test("활성 메뉴 목록에 선택한 메뉴가 있다", function () {
+    client.assert(response.status === 200, "메뉴 목록 응답이 200이 아닙니다.");
+    client.assert(Array.isArray(response.body.items), "items가 배열이 아닙니다.");
+    client.assert(
+        response.body.items.some(item => item.menuId === 2 && item.price === 5000),
+        "카페라떼(menuId=2)를 찾지 못했습니다."
+    );
+});
+%}
+
+### 2. 주문에 사용할 포인트 충전
+# @name chargePoints
+< {%
+request.variables.set("chargeKey", $random.uuid);
+%}
+POST {{baseUrl}}/api/v1/users/{{userId}}/points/charges
+Idempotency-Key: {{chargeKey}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": {{chargeAmount}}
+}
+
+> {%
+client.test("포인트가 한 번 충전된다", function () {
+    client.assert(response.status === 201, "포인트 충전 응답이 201이 아닙니다.");
+    client.assert(
+        response.headers.valueOf("Idempotency-Replayed") === "false",
+        "최초 충전 응답이 replay로 표시되었습니다."
+    );
+    client.assert(response.body.userId === 10, "충전 사용자 ID가 다릅니다.");
+    client.assert(response.body.chargedAmount === 10000, "충전 금액이 다릅니다.");
+    client.assert(response.body.balance >= 10000, "충전 후 잔액이 예상보다 작습니다.");
+});
+client.global.set("chargeKey", request.variables.get("chargeKey"));
+client.global.set("chargeResponse", JSON.stringify(response.body));
+%}
+
+### 3. 같은 충전 요청을 재전송해 멱등 응답 확인
+# @name replayChargePoints
+POST {{baseUrl}}/api/v1/users/{{userId}}/points/charges
+Idempotency-Key: {{chargeKey}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": {{chargeAmount}}
+}
+
+> {%
+client.test("같은 충전 요청은 최초 응답을 재생한다", function () {
+    client.assert(response.status === 201, "충전 재요청 응답이 201이 아닙니다.");
+    client.assert(
+        response.headers.valueOf("Idempotency-Replayed") === "true",
+        "충전 재요청이 replay로 표시되지 않았습니다."
+    );
+    client.assert(
+        JSON.stringify(response.body) === client.global.get("chargeResponse"),
+        "충전 재요청 본문이 최초 응답과 다릅니다."
+    );
+});
+%}
+
+### 4. 카페라떼 주문 및 포인트 결제
+# @name createOrder
+< {%
+request.variables.set("orderKey", $random.uuid);
+%}
+POST {{baseUrl}}/api/v1/orders
+Idempotency-Key: {{orderKey}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "userId": {{userId}},
+  "menuId": {{menuId}}
+}
+
+> {%
+client.test("주문이 결제 완료 상태로 생성된다", function () {
+    client.assert(response.status === 201, "주문 응답이 201이 아닙니다.");
+    client.assert(
+        response.headers.valueOf("Idempotency-Replayed") === "false",
+        "최초 주문 응답이 replay로 표시되었습니다."
+    );
+    client.assert(response.body.userId === 10, "주문 사용자 ID가 다릅니다.");
+    client.assert(response.body.menu.menuId === 2, "주문 메뉴 ID가 다릅니다.");
+    client.assert(response.body.paidAmount === 5000, "결제 금액이 다릅니다.");
+    client.assert(response.body.status === "PAID", "주문 상태가 PAID가 아닙니다.");
+});
+client.global.set("orderKey", request.variables.get("orderKey"));
+client.global.set("orderResponse", JSON.stringify(response.body));
+%}
+
+### 5. 같은 주문을 재전송해 중복 결제 방지 확인
+# @name replayOrder
+POST {{baseUrl}}/api/v1/orders
+Idempotency-Key: {{orderKey}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "userId": {{userId}},
+  "menuId": {{menuId}}
+}
+
+> {%
+client.test("같은 주문 요청은 최초 응답을 재생한다", function () {
+    client.assert(response.status === 201, "주문 재요청 응답이 201이 아닙니다.");
+    client.assert(
+        response.headers.valueOf("Idempotency-Replayed") === "true",
+        "주문 재요청이 replay로 표시되지 않았습니다."
+    );
+    client.assert(
+        JSON.stringify(response.body) === client.global.get("orderResponse"),
+        "주문 재요청 본문이 최초 응답과 다릅니다."
+    );
+});
+%}
+
+### 6. 결제 주문이 인기 메뉴 집계에 반영되었는지 확인
+# @name getPopularMenus
+GET {{baseUrl}}/api/v1/menus/popular
+Accept: application/json
+
+> {%
+client.test("주문한 메뉴가 인기 메뉴 집계에 포함된다", function () {
+    client.assert(response.status === 200, "인기 메뉴 응답이 200이 아닙니다.");
+    client.assert(Array.isArray(response.body.items), "items가 배열이 아닙니다.");
+    client.assert(
+        response.body.items.some(item => item.menuId === 2 && item.orderCount >= 1),
+        "주문한 카페라떼가 인기 메뉴 집계에 없습니다."
+    );
+});
+%}

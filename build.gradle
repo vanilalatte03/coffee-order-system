@@ -64,6 +64,8 @@ spotless {
                 '.gitignore',
                 '.githooks/*',
                 'scripts/**/*.ps1',
+                'src/test/http/*.http',
+                'src/test/http/*.md',
                 'src/**/*.yml',
                 'src/**/*.yaml'
         trimTrailingWhitespace()
