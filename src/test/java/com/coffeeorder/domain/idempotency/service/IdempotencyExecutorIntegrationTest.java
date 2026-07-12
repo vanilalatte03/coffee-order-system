@@ -18,6 +18,7 @@ import com.coffeeorder.domain.user.service.ValidateUserService;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -37,6 +38,8 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
 
     private static final CanonicalPayload CHARGE_100 =
             CanonicalPayload.fromJson("{\"amount\":100,\"userId\":10}");
+    private static final CanonicalPayload CHARGE_200 =
+            CanonicalPayload.fromJson("{\"amount\":200,\"userId\":10}");
 
     @Autowired private IdempotencyExecutor idempotencyExecutor;
     @Autowired private PointWriteService pointWriteService;
@@ -141,6 +144,28 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         assertThat(userTwentyReplay.replayed()).isTrue();
         assertThat(userTwentyReplay.snapshot()).isEqualTo(anotherUser.snapshot());
         assertThat(idempotencyCount()).isEqualTo(3);
+    }
+
+    @Test
+    void 대소문자만_다른_키는_독립적으로_실행한다() {
+        IdempotencyExecutionResult upperCaseKey =
+                executeCharge(
+                        10,
+                        "Case-Key",
+                        CHARGE_100,
+                        () -> success(pointWriteService.charge(10, 100)));
+        IdempotencyExecutionResult lowerCaseKey =
+                executeCharge(
+                        10,
+                        "case-key",
+                        CHARGE_200,
+                        () -> success(pointWriteService.charge(10, 200)));
+
+        assertThat(upperCaseKey.replayed()).isFalse();
+        assertThat(lowerCaseKey.replayed()).isFalse();
+        assertThat(balanceOf(10)).isEqualTo(300);
+        assertThat(ledgerCount()).isEqualTo(2);
+        assertThat(idempotencyCount()).isEqualTo(2);
     }
 
     @Test
@@ -337,6 +362,69 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
         }
     }
 
+    @Test
+    void 동시_같은_키의_다른_hash는_승자만_실행하고_패자를_거절한다() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CyclicBarrier startBarrier = new CyclicBarrier(2);
+        CyclicBarrier processingFlushBarrier = new CyclicBarrier(2);
+        AtomicInteger executions = new AtomicInteger();
+
+        org.mockito.Mockito.doAnswer(
+                        invocation -> {
+                            processingFlushBarrier.await(5, SECONDS);
+                            return invocation.callRealMethod();
+                        })
+                .when(idempotencyRequestWriter)
+                .flushProcessing(any());
+
+        try {
+            Future<IdempotencyExecutionResult> first =
+                    executor.submit(
+                            () -> {
+                                startBarrier.await(5, SECONDS);
+                                return executeCharge(
+                                        10,
+                                        "concurrent-reused-key",
+                                        CHARGE_100,
+                                        () -> {
+                                            executions.incrementAndGet();
+                                            return success(pointWriteService.charge(10, 100));
+                                        });
+                            });
+            Future<IdempotencyExecutionResult> second =
+                    executor.submit(
+                            () -> {
+                                startBarrier.await(5, SECONDS);
+                                return executeCharge(
+                                        10,
+                                        "concurrent-reused-key",
+                                        CHARGE_200,
+                                        () -> {
+                                            executions.incrementAndGet();
+                                            return success(pointWriteService.charge(10, 200));
+                                        });
+                            });
+
+            List<Object> outcomes = List.of(resultOrFailure(first), resultOrFailure(second));
+            assertThat(
+                            outcomes.stream()
+                                    .filter(IdempotencyExecutionResult.class::isInstance)
+                                    .count())
+                    .isEqualTo(1);
+            assertThat(
+                            outcomes.stream()
+                                    .filter(IdempotencyKeyReusedException.class::isInstance)
+                                    .count())
+                    .isEqualTo(1);
+            assertThat(executions).hasValue(1);
+            assertThat(balanceOf(10)).isIn(100L, 200L);
+            assertThat(ledgerCount()).isEqualTo(1);
+            assertThat(idempotencyCount()).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private IdempotencyExecutionResult executeCharge(
             long userId, String key, CanonicalPayload payload, IdempotencyWork work) {
         return idempotencyExecutor.execute(
@@ -351,6 +439,15 @@ class IdempotencyExecutorIntegrationTest extends MySqlIntegrationTestSupport {
     private static IdempotencyResponseSnapshot success(long balance) {
         return IdempotencyResponseSnapshot.success(
                 201, "{\"balance\":" + balance + ",\"chargedAt\":\"2026-07-11T00:00:00Z\"}");
+    }
+
+    private static Object resultOrFailure(Future<IdempotencyExecutionResult> future)
+            throws Exception {
+        try {
+            return future.get(10, SECONDS);
+        } catch (ExecutionException exception) {
+            return exception.getCause();
+        }
     }
 
     private long balanceOf(long userId) {
