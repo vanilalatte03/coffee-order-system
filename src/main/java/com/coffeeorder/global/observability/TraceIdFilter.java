@@ -17,6 +17,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.HandlerMapping;
 
+/**
+ * 모든 HTTP 요청에 서버 생성 trace ID를 부여하고 요청 종료 관측치를 남긴다.
+ *
+ * <p>trace ID는 request attribute, 응답 헤더와 MDC에 같은 값으로 저장한다. 외부 헤더를 신뢰해 이어받지 않으므로 이 서비스 안의 로그·오류 응답
+ * 상관관계가 항상 한 요청에 고정된다. finally에서 MDC를 비워 servlet thread 재사용 시 누출을 막는다.
+ */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class TraceIdFilter extends OncePerRequestFilter {
@@ -88,6 +94,7 @@ public class TraceIdFilter extends OncePerRequestFilter {
         }
     }
 
+    /** 현재 HTTP 요청에 부여된 trace ID를 오류 응답과 도메인 로그에서 조회한다. */
     public static String getTraceId(HttpServletRequest request) {
         Object traceId = request.getAttribute(TRACE_ID_ATTRIBUTE);
         return traceId == null ? "unknown" : traceId.toString();

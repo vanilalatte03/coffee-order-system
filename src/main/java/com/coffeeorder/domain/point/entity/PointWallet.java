@@ -7,6 +7,12 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.Objects;
 
+/**
+ * 사용자별 현재 포인트 잔액을 보유하는 지갑 aggregate.
+ *
+ * <p>잔액은 음수가 될 수 없고, 변경 전에는 서비스 계층이 사용자 행의 비관적 쓰기 잠금을 획득해야 한다. 변경 근거는 별도의 {@link PointTransaction}
+ * 원장으로 남긴다.
+ */
 @Entity
 @Table(name = "point_wallets")
 public class PointWallet {
@@ -36,6 +42,7 @@ public class PointWallet {
         this.updatedAt = Objects.requireNonNull(updatedAt);
     }
 
+    /** 양수 금액을 더하고 long 범위 초과를 도메인 오류로 변환한다. */
     public long charge(long amount, Instant changedAt) {
         validatePositive(amount);
 
@@ -51,6 +58,7 @@ public class PointWallet {
         return balance;
     }
 
+    /** 잔액이 충분할 때만 양수 금액을 차감한다. */
     public long pay(long amount, Instant changedAt) {
         validatePositive(amount);
         if (balance < amount) {

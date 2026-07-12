@@ -17,6 +17,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+/**
+ * 포인트 충전의 멱등성 경계와 HTTP 응답 snapshot 생성을 조정한다.
+ *
+ * <p>이 클래스는 트랜잭션을 직접 열지 않는다. {@link IdempotencyExecutor}가 지갑 변경과 완료 결과 저장을 같은 트랜잭션으로 묶어, 재시도 시 중복
+ * 충전 없이 최초 결과를 재생하게 한다.
+ */
 @Service
 public class PointFacade {
 
@@ -38,6 +44,11 @@ public class PointFacade {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 포인트를 충전하고 최초 결과 또는 동일 요청의 재생 결과를 반환한다.
+     *
+     * <p>잔액 오버플로는 도메인 변경 없이 저장되는 결정적 오류이며, 사용자 없음과 일시적 저장 실패는 멱등성 결과를 남기지 않는다.
+     */
     public ChargePointsResult charge(
             ChargePointsCommand command, Instant responseTimestamp, String traceId) {
         CanonicalPayload payload =

@@ -10,6 +10,11 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 멱등성 비교와 snapshot 저장에 사용하는 결정적 JSON 직렬화 도우미.
+ *
+ * <p>객체의 필드는 이름순으로 재귀 정렬하고 배열의 입력 순서는 보존한다. 따라서 표현상 다른 객체 키 순서는 같게 만들되, 의미가 있을 수 있는 배열 순서는 바꾸지 않는다.
+ */
 final class CanonicalJson {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();

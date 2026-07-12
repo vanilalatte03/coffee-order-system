@@ -14,6 +14,12 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
+/**
+ * Phase 1 데이터 플랫폼 HTTP 계약을 {@link OrderEventPublisher} 포트로 변환한다.
+ *
+ * <p>모든 2xx는 성공, timeout·네트워크 오류·429·5xx는 재시도 가능, 그 밖의 4xx는 영구 실패로 분류한다. 이 어댑터는 결과만 반환하며 Outbox 상태
+ * 변경은 coordinator가 수행한다.
+ */
 public class HttpOrderEventPublisherAdapter implements OrderEventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(HttpOrderEventPublisherAdapter.class);
@@ -32,6 +38,7 @@ public class HttpOrderEventPublisherAdapter implements OrderEventPublisher {
         this.meterRegistry = meterRegistry;
     }
 
+    /** 이벤트 ID 헤더와 저장된 JSON snapshot을 그대로 전송하고 HTTP 결과를 상태 전이용으로 분류한다. */
     @Override
     public OrderEventPublishResult publish(ClaimedOrderEvent event) {
         long startedAt = System.nanoTime();
@@ -82,6 +89,7 @@ public class HttpOrderEventPublisherAdapter implements OrderEventPublisher {
         return result;
     }
 
+    /** 수신자가 응답한 상태 코드를 자동 재시도 가능 여부로 구분한다. */
     private static OrderEventPublishResult classify(int status) {
         if (status >= 200 && status < 300) {
             return OrderEventPublishResult.success();

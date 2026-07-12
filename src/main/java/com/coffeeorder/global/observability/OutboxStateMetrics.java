@@ -6,6 +6,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+/**
+ * Outbox 적체와 상태별 이벤트 수를 gauge로 노출한다.
+ *
+ * <p>DB 관측 쿼리 실패는 {@link Double#NaN}으로 표현해 메트릭 읽기 오류가 scheduler나 주문 처리에 영향을 주지 않게 한다.
+ */
 @Component
 public class OutboxStateMetrics {
 

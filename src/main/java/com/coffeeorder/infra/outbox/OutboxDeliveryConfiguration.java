@@ -20,6 +20,12 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.PlatformTransactionManager;
 
+/**
+ * Phase 1 HTTP Outbox 전달 구성.
+ *
+ * <p>한 인스턴스에서는 전달 cycle을 단일 작업자로 직렬화하고, 여러 인스턴스 간 중복 방지는 DB lease에 맡긴다. after-commit 신호가 과도하게 쌓여도
+ * 주기 스캔이 유실을 보완하므로 executor는 작은 bounded queue를 사용한다.
+ */
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
 @EnableConfigurationProperties(OutboxDeliveryProperties.class)
@@ -60,6 +66,11 @@ public class OutboxDeliveryConfiguration {
         return new OutboxDeliveryWorker(coordinator, properties.workerId());
     }
 
+    /**
+     * 중복 wake-up을 흡수하는 단일 스레드 executor를 만든다.
+     *
+     * <p>queue가 가득 찬 추가 신호는 버려도 다음 poll이 같은 DB 상태를 다시 스캔하므로 이벤트 자체가 유실되지는 않는다.
+     */
     @Bean("outboxDeliveryExecutor")
     Executor outboxDeliveryExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
