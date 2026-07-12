@@ -29,7 +29,7 @@ Docker daemon 가동 여부 확인, Git hook 설정, 코드 포맷, Windows Powe
 
 ### 로컬 MySQL과 애플리케이션 실행
 
-먼저 `docker version` 출력에 `Server` 섹션이 있는지 확인합니다. 아래 명령은 `compose.yml`로 `coffee-order-mysql` 컨테이너를 만들고 MySQL이 준비될 때까지 기다린 뒤 애플리케이션을 실행합니다. 로컬 값을 바꾸려면 `.env.example`을 `.env`로 복사해 수정합니다.
+먼저 `docker version` 출력에 `Server` 섹션이 있는지 확인합니다. 아래 명령은 `compose.yml`로 `coffee-order-mysql` 컨테이너를 만들고 MySQL이 준비될 때까지 기다린 뒤 애플리케이션을 실행합니다. 기본 로컬 값으로 바로 실행할 수 있으며, 값을 바꿀 때만 [.env.example](./.env.example)을 `.env`로 복사해 수정합니다. `.env`는 커밋하지 않습니다.
 
 Windows PowerShell:
 
@@ -72,28 +72,13 @@ docker compose down
 
 Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
 
-### Phase 1 런타임 환경 변수와 Mock HTTP 이벤트 수신자
+### Mock HTTP 이벤트 수신자
 
 결제 주문이 커밋되면 애플리케이션은 `DATA_PLATFORM_BASE_URL`의
 `POST /api/v1/order-events`로 `X-Event-Id`와 JSON 이벤트를 비동기 전송합니다. 수신자는
 같은 `eventId`가 중복 도착할 수 있으므로 유니크 제약이나 동등한 멱등 처리를 적용해야 합니다.
 수신자 장애는 이미 커밋된 주문 응답을 변경하지 않으며 Outbox가 최대 11회의 자동 전송 시도 후
-실패 이벤트를 격리합니다.
-
-| 환경 변수 | 기본값 | 설명 |
-| --- | --- | --- |
-| `DB_URL` | `jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true` | UTC 세션 옵션을 포함한 MySQL JDBC URL |
-| `DB_USERNAME` | `coffee` | MySQL 애플리케이션 계정 |
-| `DB_PASSWORD` | `coffee` | 로컬 개발용 MySQL 비밀번호. 운영 secret은 환경에서 주입 |
-| `DB_LOCK_WAIT_TIMEOUT_SECONDS` | `1` | 지갑·멱등성 DB 락 대기 timeout(초) |
-| `DATA_PLATFORM_BASE_URL` | `http://localhost:9090` | Mock HTTP 수신자 base URL |
-| `DATA_PLATFORM_CONNECT_TIMEOUT` | `500ms` | 연결 timeout |
-| `DATA_PLATFORM_READ_TIMEOUT` | `2s` | 응답 read timeout |
-| `OUTBOX_POLL_INTERVAL` | `1s` | 유실 방지 DB scan 주기 |
-| `OUTBOX_LEASE` | `30s` | 선점 lease |
-| `OUTBOX_WORKER_ID` | `coffee-order-system` | 다중 worker 관측 ID, 최대 100자 |
-| `OUTBOX_DELIVERY_ENABLED` | `true` | Outbox HTTP worker 활성화 여부 |
-| `OUTBOX_AFTER_COMMIT_WAKEUP_ENABLED` | `true` | 주문 commit 직후 첫 전송 깨우기 활성화 여부 |
+실패 이벤트를 격리합니다. 변수별 기본값과 변경 방법은 [.env.example](./.env.example)을 따릅니다.
 
 ### 테스트와 전체 검증
 
