@@ -7,7 +7,7 @@
 
 - JDK 21을 사용한다.
 - 별도 Gradle 설치 대신 저장소의 Gradle Wrapper를 사용한다.
-- 현재 초기 설정은 외부 DB 없이 기동된다. JPA, MySQL, Flyway와 Testcontainers는 해당 구현 단계에서 연결한다.
+- 로컬 실행과 Testcontainers 통합 테스트는 실제 pull·기동을 확인한 `mysql:8.0.42` 이미지를 사용한다.
 
 ## 실행 전 preflight
 
@@ -19,7 +19,35 @@ docker version
 
 출력에 Client 정보뿐 아니라 `Server` 섹션도 있어야 한다. `Server` 섹션이 없거나 daemon 연결 오류가 나오면 테스트나 애플리케이션을 실행하기 전에 Docker runtime을 먼저 정상화한다.
 
-Step 01에서 MySQL patch 이미지 태그를 고정한 뒤, Testcontainers와 로컬 `bootRun`이 함께 사용할 정확한 컨테이너 시작·종료 명령과 datasource 환경 변수를 이 문서와 `README.md`에 기록한다. 태그와 명령이 실제로 확정되기 전에는 임의의 예시를 실행 계약으로 사용하지 않는다.
+## 로컬 MySQL 시작과 종료
+
+MySQL 컨테이너는 `compose.yml`로 `coffee_order` 데이터베이스와 로컬 개발 계정을 생성하고 호스트의 전용 `3307` 포트를 사용한다. Compose는 `.env`가 있으면 `DB_USERNAME`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`를 읽고, 없으면 로컬 기본값을 사용한다. 이미 같은 이름의 컨테이너나 같은 포트를 사용하는 프로세스가 있으면 먼저 종료한다.
+
+Windows PowerShell:
+
+```powershell
+docker compose up -d --wait mysql
+```
+
+POSIX 셸(Linux, macOS, WSL):
+
+```sh
+docker compose up -d --wait mysql
+```
+
+명령이 성공하고 컨테이너가 `healthy` 상태가 되면 준비가 끝난 것이다. 애플리케이션 종료 후 컨테이너를 중지하고 제거한다.
+
+Windows PowerShell:
+
+```powershell
+docker compose down
+```
+
+POSIX 셸(Linux, macOS, WSL):
+
+```sh
+docker compose down
+```
 
 ## Git hook 설정
 
@@ -103,6 +131,14 @@ curl --fail --silent --show-error http://localhost:8080/actuator/health
 ```
 
 실행 경로나 런타임 설정을 변경했다면 테스트뿐 아니라 애플리케이션 기동과 Health endpoint도 확인한다.
+
+애플리케이션은 저장소 루트의 `.env`를 선택적으로 읽는다. `.env`가 없거나 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`를 생략하면 로컬 개발값을 기본값으로 사용한다. Flyway가 migration을 적용하고 Hibernate `ddl-auto=validate`가 스키마를 검증한다. JDBC 연결은 `connectionTimeZone=UTC`와 `forceConnectionTimeZoneToSession=true`로 세션 타임존을 UTC에 고정한다.
+
+## IntelliJ 수동 HTTP 시나리오
+
+MySQL과 애플리케이션을 실행한 뒤 `src/test/http/coffee-order-happy-path.http`를 IntelliJ에서 열고 **Run All Requests in File**을 실행한다. 개별 요청은 파일 위에서 아래 순서로 실행한다.
+
+시나리오는 Health, 활성 메뉴, 포인트 충전과 멱등 재요청, 주문·결제와 멱등 재요청, 인기 메뉴 반영을 차례로 검증한다. 자세한 실행 방법과 상태 변화는 `src/test/http/README.md`를 따른다.
 
 ## 테스트와 전체 검증
 

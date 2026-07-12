@@ -208,7 +208,7 @@ erDiagram
 | `id` | `BIGINT` | N | PK, auto increment |
 | `user_id` | `BIGINT` | N | FK → `users.id` |
 | `operation` | `VARCHAR(30)` | N | `POINT_CHARGE`, `ORDER_CREATE` |
-| `idempotency_key` | `VARCHAR(128)` | N | 클라이언트가 생성한 키 |
+| `idempotency_key` | `VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin` | N | 대소문자를 구분하는 클라이언트 생성 키 |
 | `request_hash` | `CHAR(64)` | N | 정규화 요청의 SHA-256 hex |
 | `status` | `VARCHAR(20)` | N | 트랜잭션 내부 `PROCESSING`, 커밋 시 `COMPLETED` |
 | `response_status` | `SMALLINT` | Y | 최초 완료 HTTP 상태 |

@@ -1,9 +1,42 @@
 spring:
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: coffee-order-system
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/coffee_order?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true}
+    username: ${DB_USERNAME:coffee}
+    password: ${DB_PASSWORD:coffee}
+    hikari:
+      connection-init-sql: SET SESSION innodb_lock_wait_timeout = ${DB_LOCK_WAIT_TIMEOUT_SECONDS:1}
+  flyway:
+    enabled: true
+  jackson:
+    deserialization:
+      accept-float-as-int: false
+      fail-on-unknown-properties: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
+
+outbox:
+  delivery:
+    enabled: ${OUTBOX_DELIVERY_ENABLED:true}
+    base-url: ${DATA_PLATFORM_BASE_URL:http://localhost:9090}
+    connect-timeout: ${DATA_PLATFORM_CONNECT_TIMEOUT:500ms}
+    read-timeout: ${DATA_PLATFORM_READ_TIMEOUT:2s}
+    poll-interval: ${OUTBOX_POLL_INTERVAL:1s}
+    lease: ${OUTBOX_LEASE:30s}
+    worker-id: ${OUTBOX_WORKER_ID:${spring.application.name}}
+    after-commit-wakeup-enabled: ${OUTBOX_AFTER_COMMIT_WAKEUP_ENABLED:true}

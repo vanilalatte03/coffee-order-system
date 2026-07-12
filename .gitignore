@@ -8,5 +8,6 @@ __pycache__/
 *.iml
 
 *.log
+.env
 .DS_Store
 Thumbs.db
