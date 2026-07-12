@@ -62,51 +62,21 @@ curl --fail --silent --show-error http://localhost:8080/actuator/health
 docker compose down
 ```
 
+애플리케이션 시작 시 Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
+
 ### IntelliJ에서 실행
 
-1. IntelliJ에서 이 저장소의 루트 폴더를 엽니다.
-2. Gradle 프로젝트 가져오기가 끝날 때까지 기다립니다.
-3. Project SDK와 Gradle JVM이 JDK 21인지 확인합니다.
-4. 터미널에서 `docker compose up -d --wait mysql`을 실행합니다.
-5. `CoffeeOrderSystemApplication`의 `main` 메서드를 실행합니다.
-6. 브라우저에서 [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)를 열어 `{"status":"UP"}`을 확인합니다.
+IntelliJ에서는 Project SDK와 Gradle JVM을 JDK 21로 설정하고 `docker compose up -d --wait mysql`을 실행한 뒤 `CoffeeOrderSystemApplication`의 `main` 메서드를 시작해 [Health endpoint](http://localhost:8080/actuator/health)가 `UP`인지 확인합니다.
 
-Flyway가 빈 MySQL에 스키마와 초기 사용자·메뉴·0P 지갑을 만들고 Hibernate는 생성된 스키마를 `validate`만 합니다.
+### 외부 이벤트 수신 설정
 
-### Mock HTTP 이벤트 수신자
-
-결제 주문이 커밋되면 애플리케이션은 `DATA_PLATFORM_BASE_URL`의
-`POST /api/v1/order-events`로 `X-Event-Id`와 JSON 이벤트를 비동기 전송합니다. 수신자는
-같은 `eventId`가 중복 도착할 수 있으므로 유니크 제약이나 동등한 멱등 처리를 적용해야 합니다.
-수신자 장애는 이미 커밋된 주문 응답을 변경하지 않으며 Outbox가 최대 11회의 자동 전송 시도 후
-실패 이벤트를 격리합니다. 변수별 기본값과 변경 방법은 [.env.example](./.env.example)을 따릅니다.
+외부 이벤트 수신 주소는 [.env.example](./.env.example)의 `DATA_PLATFORM_BASE_URL`로 설정하며, HTTP 요청 계약은 [API 명세](./docs/API.md#5-데이터-플랫폼-이벤트-계약), Outbox 재시도와 중복 처리 전략은 [Architecture](./docs/ARCHITECTURE.md#7-외부-이벤트-전달)를 따릅니다.
 
 ### 테스트와 전체 검증
 
-Docker daemon이 실행 중인 상태에서 저장소의 JDK 21과 Gradle Wrapper 8.14.5로 다음 게이트를
-실행합니다.
+Docker daemon을 실행한 뒤 포맷 검사, 테스트, 전체 빌드와 애플리케이션 Health 확인은 [Commands의 테스트와 전체 검증](./docs/COMMANDS.md#테스트와-전체-검증)을 따릅니다.
 
-Windows PowerShell:
-
-```powershell
-.\gradlew.bat spotlessCheck
-.\gradlew.bat test
-.\gradlew.bat clean build
-```
-
-POSIX 셸(Linux, macOS, WSL):
-
-```sh
-./gradlew spotlessCheck
-./gradlew test
-./gradlew clean build
-```
-
-통합 테스트는 H2나 Repository mock 대신 Testcontainers MySQL을 사용합니다. Phase 1 수용
-게이트는 동시 주문·충전, 교차 ApplicationContext 멱등성, Outbox HTTP 실패·재시도와
-`INFORMATION_SCHEMA`, `ANALYZE TABLE`, `EXPLAIN FORMAT=JSON` 기반 주요 인덱스
-`possible_keys`를 함께 검증합니다. 실제 애플리케이션 기동과 Health 확인을 포함한 전체 명령
-정본은 [Commands](./docs/COMMANDS.md)를 따릅니다.
+통합 테스트는 H2나 Repository mock 대신 Testcontainers MySQL로 실제 락·제약·트랜잭션을 검증합니다.
 
 ## 목표
 
@@ -130,59 +100,7 @@ POSIX 셸(Linux, macOS, WSL):
 
 ## 핵심 ERD
 
-```mermaid
-erDiagram
-    USERS ||--|| POINT_WALLETS : owns
-    USERS ||--o{ POINT_TRANSACTIONS : has
-    USERS ||--o{ ORDERS : places
-    USERS ||--o{ IDEMPOTENCY_REQUESTS : submits
-    MENUS ||--o{ ORDERS : ordered_as
-    ORDERS o|--|| POINT_TRANSACTIONS : paid_by
-    ORDERS ||--|| OUTBOX_EVENTS : emits_logically
-
-    USERS {
-        BIGINT id PK
-    }
-    MENUS {
-        BIGINT id PK
-        BIGINT price
-        VARCHAR status
-    }
-    POINT_WALLETS {
-        BIGINT user_id PK
-        BIGINT balance
-    }
-    POINT_TRANSACTIONS {
-        BIGINT id PK
-        BIGINT user_id FK
-        BIGINT order_id FK
-        BIGINT amount
-        VARCHAR type
-    }
-    ORDERS {
-        BIGINT id PK
-        BIGINT user_id FK
-        BIGINT menu_id FK
-        BIGINT paid_amount
-        VARCHAR status
-    }
-    IDEMPOTENCY_REQUESTS {
-        BIGINT id PK
-        BIGINT user_id FK
-        VARCHAR operation
-        VARCHAR idempotency_key
-    }
-    OUTBOX_EVENTS {
-        CHAR event_id PK
-        VARCHAR aggregate_type
-        BIGINT aggregate_id
-        VARCHAR status
-        INT attempt_count
-    }
-```
-
-주문은 결제 시점의 메뉴·가격 스냅샷을 보존하고, Outbox는 `(aggregate_type, aggregate_id)`로
-주문과 논리적으로 연결한다. 전체 컬럼·제약·인덱스와 상태 전이는 [ERD](./docs/ERD.md)를 따른다.
+핵심 테이블 관계와 전체 컬럼·제약·인덱스는 [ERD](./docs/ERD.md#2-관계도)를 참고합니다. 주문은 결제 시점의 메뉴·가격 스냅샷을 보존하고, Outbox는 `(aggregate_type, aggregate_id)`로 주문과 논리적으로 연결합니다.
 
 ## 문제 해결 전략
 
@@ -202,9 +120,7 @@ erDiagram
 
 인기 메뉴는 Redis나 Kafka의 비동기 카운터가 아니라 MySQL의 `PAID` 주문 원본을 직접 집계합니다. 기준은 한 번 고정한 UTC 시각의 `[to - 168시간, to)`이며, 주문 횟수 내림차순과 메뉴 ID 오름차순으로 최대 3개를 선택합니다.
 
-### 향후 확장: Redis 메뉴 캐시
-
-Redis는 핵심 기능을 완성한 뒤 활성 메뉴 목록에만 Cache-Aside로 적용합니다. Redis는 정본이 아니며 장애 시 MySQL로 폴백합니다.
+향후 Redis는 활성 메뉴 목록에만 Cache-Aside로 적용하되, 장애 시 MySQL로 폴백하고 MySQL을 정본으로 유지합니다.
 
 ### 검증
 
