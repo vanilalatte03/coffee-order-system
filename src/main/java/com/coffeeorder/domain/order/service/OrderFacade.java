@@ -7,8 +7,8 @@ import com.coffeeorder.domain.idempotency.service.IdempotencyExecutor;
 import com.coffeeorder.domain.idempotency.service.IdempotencyResponseSnapshot;
 import com.coffeeorder.domain.menu.service.MenuNotFoundException;
 import com.coffeeorder.domain.menu.service.MenuNotOrderableException;
+import com.coffeeorder.domain.menu.service.MenuService;
 import com.coffeeorder.domain.menu.service.OrderableMenuResult;
-import com.coffeeorder.domain.menu.service.ValidateOrderableMenuService;
 import com.coffeeorder.domain.order.dto.CreateOrderResponse;
 import com.coffeeorder.domain.order.dto.OrderMenuResponse;
 import com.coffeeorder.domain.outbox.service.OutboxEventService;
@@ -32,7 +32,7 @@ public class OrderFacade {
 
     private final IdempotencyExecutor idempotencyExecutor;
     private final UserService userService;
-    private final ValidateOrderableMenuService validateOrderableMenuService;
+    private final MenuService menuService;
     private final PointWriteService pointWriteService;
     private final OrderService orderService;
     private final OutboxEventService outboxEventService;
@@ -41,14 +41,14 @@ public class OrderFacade {
     public OrderFacade(
             IdempotencyExecutor idempotencyExecutor,
             UserService userService,
-            ValidateOrderableMenuService validateOrderableMenuService,
+            MenuService menuService,
             PointWriteService pointWriteService,
             OrderService orderService,
             OutboxEventService outboxEventService,
             ObjectMapper objectMapper) {
         this.idempotencyExecutor = idempotencyExecutor;
         this.userService = userService;
-        this.validateOrderableMenuService = validateOrderableMenuService;
+        this.menuService = menuService;
         this.pointWriteService = pointWriteService;
         this.orderService = orderService;
         this.outboxEventService = outboxEventService;
@@ -86,7 +86,7 @@ public class OrderFacade {
     private IdempotencyResponseSnapshot executeOrder(CreateOrderCommand command, String traceId) {
         OrderableMenuResult menu;
         try {
-            menu = validateOrderableMenuService.validate(command.menuId());
+            menu = menuService.validateOrderable(command.menuId());
         } catch (MenuNotFoundException exception) {
             return IdempotencyResponseSnapshot.deterministicError(ErrorCode.MENU_NOT_FOUND);
         } catch (MenuNotOrderableException exception) {

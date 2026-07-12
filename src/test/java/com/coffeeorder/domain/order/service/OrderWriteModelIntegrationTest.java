@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.coffeeorder.MySqlIntegrationTestSupport;
 import com.coffeeorder.domain.menu.service.MenuNotOrderableException;
+import com.coffeeorder.domain.menu.service.MenuService;
 import com.coffeeorder.domain.menu.service.OrderableMenuResult;
-import com.coffeeorder.domain.menu.service.ValidateOrderableMenuService;
 import com.coffeeorder.domain.outbox.entity.OutboxStatus;
 import com.coffeeorder.domain.outbox.service.OutboxEventService;
 import com.coffeeorder.domain.outbox.service.RecordOrderPaidEventCommand;
@@ -38,7 +38,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
     private static final Instant CLOCK_INSTANT = Instant.parse("2026-07-11T04:35:00.456789123Z");
     private static final Instant NORMALIZED_INSTANT = Instant.parse("2026-07-11T04:35:00.456789Z");
 
-    @Autowired private ValidateOrderableMenuService validateOrderableMenuService;
+    @Autowired private MenuService menuService;
     @Autowired private OrderService orderService;
     @Autowired private PointWriteService pointWriteService;
     @Autowired private OutboxEventService outboxEventService;
@@ -60,7 +60,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Test
     void 저장한_주문_ID로_같은_transaction에서_PAYMENT와_Outbox를_연결한다() throws Exception {
-        OrderableMenuResult menu = validateOrderableMenuService.validate(2);
+        OrderableMenuResult menu = menuService.validateOrderable(2);
 
         WorkflowResult result = transactionTemplate.execute(status -> writeOrder(menu));
 
@@ -121,7 +121,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Test
     void 주문_snapshot은_저장_뒤_현재_메뉴가_바뀌어도_변하지_않는다() {
-        OrderableMenuResult menu = validateOrderableMenuService.validate(2);
+        OrderableMenuResult menu = menuService.validateOrderable(2);
         WorkflowResult result = transactionTemplate.execute(status -> writeOrder(menu));
 
         jdbcTemplate.update("UPDATE menus SET name = '새 이름', price = 9000 WHERE id = 2");
@@ -137,7 +137,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Test
     void 비활성_메뉴는_주문_모델_생성_전에_거절한다() {
-        assertThatThrownBy(() -> validateOrderableMenuService.validate(4))
+        assertThatThrownBy(() -> menuService.validateOrderable(4))
                 .isInstanceOf(MenuNotOrderableException.class);
 
         assertThat(count("orders")).isZero();
@@ -147,7 +147,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
 
     @Test
     void 외부_transaction_실패는_주문_PAYMENT_Outbox와_지갑을_모두_롤백한다() {
-        OrderableMenuResult menu = validateOrderableMenuService.validate(2);
+        OrderableMenuResult menu = menuService.validateOrderable(2);
 
         assertThatThrownBy(
                         () ->
@@ -167,8 +167,7 @@ class OrderWriteModelIntegrationTest extends MySqlIntegrationTestSupport {
     @Test
     void DB는_주문별_PAYMENT와_ORDER_PAID_중복을_각각_거절한다() {
         WorkflowResult result =
-                transactionTemplate.execute(
-                        status -> writeOrder(validateOrderableMenuService.validate(2)));
+                transactionTemplate.execute(status -> writeOrder(menuService.validateOrderable(2)));
 
         assertThatThrownBy(
                         () ->
