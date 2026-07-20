@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "review-code-order-safe-observability",
+  "suite": "review-code",
+  "title": "주문 관측 로그 변경 검토",
+  "base_revision": "ac9a5749764c6bb065b2f07e3e02cd58eb165856",
+  "contract_refs": [
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "contains": "외부 네트워크 호출은 이 트랜잭션 안에서 수행하지 않는다."
+    },
+    {
+      "path": "docs/CONVENTIONS.md",
+      "contains": "로그는 `traceId`, `orderId`, `eventId`처럼 흐름을 추적할 식별자를 포함하되 요청·응답 전문과 민감정보는 기록하지 않는다."
+    }
+  ],
+  "task": {
+    "review_scope": [
+      "src/main/java/com/coffeeorder/domain/order/service/OrderFacade.java"
+    ],
+    "instruction": "review-code 스킬을 적용해 아래 후보 변경의 회귀 위험을 read-only로 검토하라. 실제 변경 범위와 저장소 계약에 근거한 line-anchored finding만 반환하고, 범위 밖 확장 기능은 지적하지 않는다.",
+    "candidate_diff": "diff --git a/src/main/java/com/coffeeorder/domain/order/service/OrderFacade.java b/src/main/java/com/coffeeorder/domain/order/service/OrderFacade.java\nindex 0000000..0000000 100644\n--- a/src/main/java/com/coffeeorder/domain/order/service/OrderFacade.java\n+++ b/src/main/java/com/coffeeorder/domain/order/service/OrderFacade.java\n@@ -126,9 +126,10 @@ public class OrderFacade {\n                         order.paymentAmount(),\n                         order.paidAt()));\n         log.info(\n-                \"order_payment_attempted traceId={} userId={} orderId={} operation=ORDER_CREATE resultCode=PENDING_COMMIT\",\n+                \"order_payment_attempted traceId={} userId={} orderId={} menuId={} operation=ORDER_CREATE resultCode=PENDING_COMMIT\",\n                 traceId,\n                 order.userId(),\n-                order.orderId());\n+                order.orderId(),\n+                order.menuId());\n \n         CreateOrderResponse response =\n"
+  }
+}

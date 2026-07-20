@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "name": "review-code-fixture-health",
+  "suite_id": "review-code",
+  "fixture_kind": "deterministic-contract-health"
+}
