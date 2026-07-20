@@ -22,6 +22,10 @@ COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 PATCH_HEADER = re.compile(r"^diff --git a/([^\r\n]+) b/([^\r\n]+)$", re.MULTILINE)
 PATCH_OLD_PATH = re.compile(r"^--- a/([^\r\n]+)$", re.MULTILINE)
 PATCH_NEW_PATH = re.compile(r"^\+\+\+ b/([^\r\n]+)$", re.MULTILINE)
+PATCH_HUNK_HEADER = re.compile(
+    r"^@@ -\d+(?:,(?P<old_count>\d+))? \+\d+(?:,(?P<new_count>\d+))? @@(?: .*)?$"
+)
+NO_NEWLINE_MARKER = r"\ No newline at end of file"
 FORBIDDEN_PUBLIC_FIELDS = {
     "answer",
     "answers",
@@ -176,12 +180,20 @@ def candidate_diff_paths(candidate_diff: str) -> set[str]:
     if "GIT binary patch" in candidate_diff or "Binary files " in candidate_diff:
         raise FixtureHealthError("binary candidate_diff는 허용하지 않습니다.")
 
-    headers = PATCH_HEADER.findall(candidate_diff)
-    if not headers or len(headers) != len(re.findall(r"^diff --git ", candidate_diff, re.MULTILINE)):
+    lines = candidate_diff.splitlines()
+    if not lines or not lines[0].startswith("diff --git "):
         raise FixtureHealthError("candidate_diff의 diff --git header가 없거나 해석할 수 없습니다.")
 
     paths: set[str] = set()
-    for old_path, new_path in headers:
+    line_index = 0
+    while line_index < len(lines):
+        header = PATCH_HEADER.fullmatch(lines[line_index])
+        if header is None:
+            raise FixtureHealthError(
+                "candidate_diff의 각 파일 patch는 diff --git header로 시작해야 합니다."
+            )
+
+        old_path, new_path = header.groups()
         validate_relative_path(old_path)
         validate_relative_path(new_path)
         if old_path != new_path:
@@ -189,26 +201,76 @@ def candidate_diff_paths(candidate_diff: str) -> set[str]:
         if old_path in paths:
             raise FixtureHealthError(f"candidate_diff에 경로가 중복됩니다: {old_path}")
         paths.add(old_path)
+        line_index += 1
 
-    header_metadata: list[str] = []
-    inside_hunk = False
-    for line in candidate_diff.splitlines():
-        if line.startswith("diff --git "):
-            inside_hunk = False
-        elif line.startswith("@@"):
-            inside_hunk = True
-        if not inside_hunk:
-            header_metadata.append(line)
+        while line_index < len(lines) and not lines[line_index].startswith("--- "):
+            if lines[line_index].startswith(("diff --git ", "@@")):
+                raise FixtureHealthError(
+                    "candidate_diff의 ---/+++ path header가 완전하지 않습니다."
+                )
+            line_index += 1
 
-    metadata = "\n".join(header_metadata)
-    old_paths = PATCH_OLD_PATH.findall(metadata)
-    new_paths = PATCH_NEW_PATH.findall(metadata)
-    if len(old_paths) != len(headers) or len(new_paths) != len(headers):
-        raise FixtureHealthError("candidate_diff의 ---/+++ path header가 완전하지 않습니다.")
-    for path in [*old_paths, *new_paths]:
-        validate_relative_path(path)
-    if set(old_paths) != paths or set(new_paths) != paths:
-        raise FixtureHealthError("candidate_diff의 path header들이 서로 일치하지 않습니다.")
+        if line_index >= len(lines):
+            raise FixtureHealthError("candidate_diff의 ---/+++ path header가 완전하지 않습니다.")
+        old_path_header = PATCH_OLD_PATH.fullmatch(lines[line_index])
+        line_index += 1
+        if line_index >= len(lines):
+            raise FixtureHealthError("candidate_diff의 ---/+++ path header가 완전하지 않습니다.")
+        new_path_header = PATCH_NEW_PATH.fullmatch(lines[line_index])
+        line_index += 1
+        if old_path_header is None or new_path_header is None:
+            raise FixtureHealthError("candidate_diff의 ---/+++ path header가 완전하지 않습니다.")
+
+        header_old_path = old_path_header.group(1)
+        header_new_path = new_path_header.group(1)
+        validate_relative_path(header_old_path)
+        validate_relative_path(header_new_path)
+        if header_old_path != old_path or header_new_path != new_path:
+            raise FixtureHealthError(
+                "candidate_diff의 각 diff --git header와 ---/+++ path header가 일치해야 합니다."
+            )
+
+        has_hunk = False
+        while line_index < len(lines) and not lines[line_index].startswith("diff --git "):
+            hunk_header = PATCH_HUNK_HEADER.fullmatch(lines[line_index])
+            if hunk_header is None:
+                raise FixtureHealthError(
+                    "candidate_diff의 각 파일 patch는 diff --git header로 시작해야 합니다."
+                )
+            has_hunk = True
+            old_remaining = int(hunk_header.group("old_count") or "1")
+            new_remaining = int(hunk_header.group("new_count") or "1")
+            line_index += 1
+
+            while old_remaining > 0 or new_remaining > 0:
+                if line_index >= len(lines):
+                    raise FixtureHealthError(
+                        "candidate_diff hunk가 선언된 줄 수보다 일찍 끝났습니다."
+                    )
+                line = lines[line_index]
+                if line == NO_NEWLINE_MARKER:
+                    line_index += 1
+                    continue
+                if line.startswith(" "):
+                    old_remaining -= 1
+                    new_remaining -= 1
+                elif line.startswith("-"):
+                    old_remaining -= 1
+                elif line.startswith("+"):
+                    new_remaining -= 1
+                else:
+                    raise FixtureHealthError("candidate_diff hunk 본문을 해석할 수 없습니다.")
+                if old_remaining < 0 or new_remaining < 0:
+                    raise FixtureHealthError(
+                        "candidate_diff hunk의 실제 줄 수가 선언된 범위를 초과합니다."
+                    )
+                line_index += 1
+
+            while line_index < len(lines) and lines[line_index] == NO_NEWLINE_MARKER:
+                line_index += 1
+
+        if not has_hunk:
+            raise FixtureHealthError("candidate_diff에는 하나 이상의 hunk가 필요합니다.")
     return paths
 
 
@@ -216,6 +278,12 @@ def validate_candidate_diff(
     base_revision: str, candidate_diff: str, review_scope: list[str]
 ) -> str | None:
     try:
+        diff_paths = candidate_diff_paths(candidate_diff)
+        if diff_paths != set(review_scope):
+            return (
+                "candidate_diff 경로와 review_scope가 일치하지 않습니다: "
+                f"diff={sorted(diff_paths)}, scope={sorted(review_scope)}"
+            )
         base_files = {
             relative_path: git_file_content(base_revision, relative_path)
             for relative_path in review_scope

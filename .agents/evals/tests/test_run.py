@@ -349,6 +349,82 @@ class FixtureHealthTest(unittest.TestCase):
                 with self.assertRaises(HARNESS.FixtureHealthError):
                     HARNESS.candidate_diff_paths(invalid_patch)
 
+    def test_patch_rejects_crossed_file_path_headers(self) -> None:
+        crossed_path_patch = (
+            "diff --git a/a.txt b/a.txt\n"
+            "--- a/a.txt\n"
+            "+++ b/b.txt\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+middle\n"
+            "diff --git a/b.txt b/b.txt\n"
+            "--- a/b.txt\n"
+            "+++ b/a.txt\n"
+            "@@ -1 +1 @@\n"
+            "-middle\n"
+            "+new\n"
+        )
+
+        with self.assertRaisesRegex(
+            HARNESS.FixtureHealthError,
+            "각 diff --git header와 ---/\\+\\+\\+ path header",
+        ):
+            HARNESS.candidate_diff_paths(crossed_path_patch)
+
+    def test_patch_accepts_multiple_matched_file_sections(self) -> None:
+        multi_file_patch = (
+            "diff --git a/a.txt b/a.txt\n"
+            "--- a/a.txt\n"
+            "+++ b/a.txt\n"
+            "@@ -1 +1 @@\n"
+            "-old-a\n"
+            "+new-a\n"
+            "diff --git a/b.txt b/b.txt\n"
+            "--- a/b.txt\n"
+            "+++ b/b.txt\n"
+            "@@ -1 +1 @@\n"
+            "-old-b\n"
+            "+new-b\n"
+        )
+        pinned_files = {"a.txt": "old-a\n", "b.txt": "old-b\n"}
+
+        with mock.patch.object(
+            HARNESS,
+            "git_file_content",
+            side_effect=lambda _, path: pinned_files[path],
+        ):
+            patch_error = HARNESS.validate_candidate_diff(
+                "a" * 40,
+                multi_file_patch,
+                ["a.txt", "b.txt"],
+            )
+
+        self.assertIsNone(patch_error)
+
+    def test_patch_rejects_headerless_section_after_hunk(self) -> None:
+        headerless_creation_patch = (
+            "diff --git a/a.txt b/a.txt\n"
+            "--- a/a.txt\n"
+            "+++ b/a.txt\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+            "--- /dev/null\n"
+            "+++ b/outside.txt\n"
+            "@@ -0,0 +1 @@\n"
+            "+created outside scope\n"
+        )
+
+        with mock.patch.object(HARNESS, "git_file_content", return_value="old\n"):
+            patch_error = HARNESS.validate_candidate_diff(
+                "a" * 40,
+                headerless_creation_patch,
+                ["a.txt"],
+            )
+
+        self.assertIsNotNone(patch_error)
+        self.assertIn("diff --git header로 시작", patch_error)
+
 
 if __name__ == "__main__":
     unittest.main()
