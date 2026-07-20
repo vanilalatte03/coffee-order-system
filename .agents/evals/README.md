@@ -6,7 +6,8 @@ A/B 비교를 만들지 않는다.
 
 `health`가 보장하는 범위는 다음과 같다.
 
-- manifest와 case 필수 schema, case ID 유일성, 40자리 `base_revision` commit의 존재
+- manifest와 case 필수 schema, case ID 유일성, 40자리 `base_revision` commit의 존재와
+  `origin/develop` 또는 `origin/main` 도달 가능성
 - `review_scope` 파일과 `contract_refs` 파일·문구가 모두 같은 pinned base snapshot에 존재함
 - `candidate_diff` 경로가 `review_scope`와 정확히 같고 저장소 밖 경로를 사용하지 않음
 - `candidate_diff`가 현재 working tree가 아니라 pinned base snapshot에 적용 가능함

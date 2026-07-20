@@ -175,8 +175,8 @@ python3 -m unittest discover -s .agents/skills/phase-issue-autopilot/tests -p "t
 ### 에이전트 eval 하네스
 
 `Agent Eval Health` workflow는 모델을 호출하지 않는다. 공개 review fixture의 schema와 ID,
-고정 `base_revision`, 같은 base snapshot의 scope·계약 참조, candidate patch 경로와 적용성만
-결정적으로 검증한다.
+`origin/develop` 또는 `origin/main`에서 도달 가능한 고정 `base_revision`, 같은 base snapshot의
+scope·계약 참조, candidate patch 경로와 적용성만 결정적으로 검증한다.
 
 Windows PowerShell:
 

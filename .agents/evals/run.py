@@ -23,7 +23,11 @@ PATCH_HEADER = re.compile(r"^diff --git a/([^\r\n]+) b/([^\r\n]+)$", re.MULTILIN
 PATCH_OLD_PATH = re.compile(r"^--- a/([^\r\n]+)$", re.MULTILINE)
 PATCH_NEW_PATH = re.compile(r"^\+\+\+ b/([^\r\n]+)$", re.MULTILINE)
 FORBIDDEN_PUBLIC_FIELDS = {
+    "answer",
+    "answers",
     "expected",
+    "expected_finding",
+    "expected_findings",
     "finding_id",
     "finding_ids",
     "findings",
@@ -44,6 +48,10 @@ TOP_LEVEL_CASE_FIELDS = {
 }
 TASK_FIELDS = {"review_scope", "instruction", "candidate_diff"}
 CONTRACT_REF_FIELDS = {"path", "contains"}
+STABLE_BASE_REFS = (
+    "refs/remotes/origin/develop",
+    "refs/remotes/origin/main",
+)
 
 
 class FixtureHealthError(RuntimeError):
@@ -78,6 +86,8 @@ def validate_relative_path(value: Any) -> str:
     parts = value.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         raise FixtureHealthError(f"정규화된 저장소 상대 경로만 허용합니다: {value}")
+    if any(":" in part for part in parts):
+        raise FixtureHealthError(f"Windows에서 안전한 저장소 상대 경로만 허용합니다: {value}")
     return value
 
 
@@ -107,6 +117,16 @@ def git_output(*arguments: str) -> str:
 def commit_exists(revision: str) -> bool:
     result = git_command("rev-parse", "--verify", f"{revision}^{{commit}}")
     return result.returncode == 0 and result.stdout.strip() == revision
+
+
+def stable_base_refs_containing(revision: str) -> set[str]:
+    output = git_output(
+        "for-each-ref",
+        f"--contains={revision}",
+        "--format=%(refname)",
+        *STABLE_BASE_REFS,
+    )
+    return {line.strip() for line in output.splitlines() if line.strip()}
 
 
 def git_file_content(revision: str, relative_path: str) -> str:
@@ -170,8 +190,19 @@ def candidate_diff_paths(candidate_diff: str) -> set[str]:
             raise FixtureHealthError(f"candidate_diff에 경로가 중복됩니다: {old_path}")
         paths.add(old_path)
 
-    old_paths = PATCH_OLD_PATH.findall(candidate_diff)
-    new_paths = PATCH_NEW_PATH.findall(candidate_diff)
+    header_metadata: list[str] = []
+    inside_hunk = False
+    for line in candidate_diff.splitlines():
+        if line.startswith("diff --git "):
+            inside_hunk = False
+        elif line.startswith("@@"):
+            inside_hunk = True
+        if not inside_hunk:
+            header_metadata.append(line)
+
+    metadata = "\n".join(header_metadata)
+    old_paths = PATCH_OLD_PATH.findall(metadata)
+    new_paths = PATCH_NEW_PATH.findall(metadata)
     if len(old_paths) != len(headers) or len(new_paths) != len(headers):
         raise FixtureHealthError("candidate_diff의 ---/+++ path header가 완전하지 않습니다.")
     for path in [*old_paths, *new_paths]:
@@ -193,13 +224,15 @@ def validate_candidate_diff(
         return str(error)
 
     with tempfile.TemporaryDirectory(prefix="coffee-fixture-health-") as directory:
-        temporary_root = Path(directory)
+        temporary_directory = Path(directory)
+        temporary_root = temporary_directory / "worktree"
+        temporary_root.mkdir()
         for relative_path, content in base_files.items():
             target = temporary_root.joinpath(*relative_path.split("/"))
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content.encode("utf-8"))
 
-        patch_path = temporary_root / "candidate.patch"
+        patch_path = temporary_directory / "candidate.patch"
         patch_path.write_bytes(candidate_diff.encode("utf-8"))
         result = git_command(
             "apply",
@@ -228,8 +261,12 @@ def validate_manifest(manifest: dict[str, Any]) -> tuple[list[str], str | None]:
     leaked_fields = forbidden_fields(manifest)
     if leaked_fields:
         errors.append(f"manifest.json에 금지된 필드가 있습니다: {sorted(leaked_fields)}")
-    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+    schema_version = manifest.get("schema_version")
+    if type(schema_version) is not int or schema_version != MANIFEST_SCHEMA_VERSION:
         errors.append(f"manifest.json의 schema_version은 {MANIFEST_SCHEMA_VERSION}이어야 합니다.")
+    name = manifest.get("name")
+    if not isinstance(name, str) or not name.strip():
+        errors.append("manifest.json의 name은 비어 있지 않은 문자열이어야 합니다.")
     if manifest.get("fixture_kind") != "deterministic-contract-health":
         errors.append("manifest.json의 fixture_kind는 deterministic-contract-health여야 합니다.")
     suite_id = manifest.get("suite_id")
@@ -255,7 +292,8 @@ def validate_case(path: Path, case: dict[str, Any], suite_id: str) -> list[str]:
     if leaked_fields:
         errors.append(f"{label}: 공개 fixture에 금지된 필드가 있습니다: {sorted(leaked_fields)}")
 
-    if case.get("schema_version") != CASE_SCHEMA_VERSION:
+    schema_version = case.get("schema_version")
+    if type(schema_version) is not int or schema_version != CASE_SCHEMA_VERSION:
         errors.append(f"{label}: schema_version은 {CASE_SCHEMA_VERSION}이어야 합니다.")
 
     identifier = case.get("id")
@@ -272,6 +310,13 @@ def validate_case(path: Path, case: dict[str, Any], suite_id: str) -> list[str]:
         errors.append(f"{label}: base_revision은 40자리 commit SHA여야 합니다.")
     elif not commit_exists(base_revision):
         errors.append(f"{label}: base_revision commit을 찾을 수 없습니다: {base_revision}")
+        valid_base = False
+    elif not stable_base_refs_containing(base_revision):
+        errors.append(
+            f"{label}: base_revision은 origin/develop 또는 origin/main에서 도달 가능해야 합니다: "
+            f"{base_revision}"
+        )
+        valid_base = False
 
     task = case.get("task")
     valid_scope: list[str] = []
