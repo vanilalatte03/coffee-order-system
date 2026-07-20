@@ -1,0 +1,34 @@
+name: Agent Eval Health
+
+"on":
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eval-health:
+    name: eval-health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 에이전트 eval 하네스 단위 테스트
+        run: python3 -m unittest discover -s .agents/evals/tests -p "test_*.py"
+
+      - name: 에이전트 eval 하네스 정합성 검사
+        run: python3 .agents/evals/run.py health

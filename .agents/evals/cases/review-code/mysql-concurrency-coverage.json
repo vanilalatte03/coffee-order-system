@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "review-code-mysql-concurrency-coverage",
+  "suite": "review-code",
+  "title": "동시성 회귀 테스트 변경 검토",
+  "base_revision": "ac9a5749764c6bb065b2f07e3e02cd58eb165856",
+  "contract_refs": [
+    {
+      "path": "docs/CONVENTIONS.md",
+      "contains": "H2나 Repository mock이 아니라 MySQL Testcontainers로 검증한다."
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "contains": "같은 주문 요청을 같은 멱등 키로 병렬 실행해 주문·차감·Outbox 효과가 각각 1건인지 검증"
+    }
+  ],
+  "task": {
+    "review_scope": [
+      "src/test/java/com/coffeeorder/domain/point/service/PointWalletLockConcurrencyTest.java"
+    ],
+    "instruction": "review-code 스킬을 적용해 아래 후보 변경의 회귀 위험을 read-only로 검토하라. 실제 변경 범위와 저장소 계약에 근거한 line-anchored finding만 반환하고, 범위 밖 확장 기능은 지적하지 않는다.",
+    "candidate_diff": "diff --git a/src/test/java/com/coffeeorder/domain/point/service/PointWalletLockConcurrencyTest.java b/src/test/java/com/coffeeorder/domain/point/service/PointWalletLockConcurrencyTest.java\nindex 0000000..0000000 100644\n--- a/src/test/java/com/coffeeorder/domain/point/service/PointWalletLockConcurrencyTest.java\n+++ b/src/test/java/com/coffeeorder/domain/point/service/PointWalletLockConcurrencyTest.java\n@@ -63,6 +63,5 @@\n         try {\n             assertThat(lockAcquired.await(5, SECONDS)).isTrue();\n-            assertThatThrownBy(() -> blockedCharge.get(300, MILLISECONDS))\n-                    .isInstanceOf(TimeoutException.class);\n \n+            assertThat(lockHolder).isNotNull();\n             releaseLock.countDown();\n"
+  }
+}

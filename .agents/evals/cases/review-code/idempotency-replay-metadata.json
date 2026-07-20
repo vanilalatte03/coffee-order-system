@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "review-code-idempotency-replay-metadata",
+  "suite": "review-code",
+  "title": "응답 스냅샷 처리 변경 검토",
+  "base_revision": "ac9a5749764c6bb065b2f07e3e02cd58eb165856",
+  "contract_refs": [
+    {
+      "path": "docs/API.md",
+      "contains": "현재 요청 값이며 저장된 최초 값이 아니다."
+    },
+    {
+      "path": "docs/CONVENTIONS.md",
+      "contains": "호출마다 달라지는 메타데이터는 snapshot 밖에서 생성한다."
+    }
+  ],
+  "task": {
+    "review_scope": [
+      "src/main/java/com/coffeeorder/domain/idempotency/service/IdempotencyResponseSnapshot.java"
+    ],
+    "instruction": "review-code 스킬을 적용해 아래 후보 변경의 회귀 위험을 read-only로 검토하라. 실제 변경 범위와 저장소 계약에 근거한 line-anchored finding만 반환하고, 범위 밖 확장 기능은 지적하지 않는다.",
+    "candidate_diff": "diff --git a/src/main/java/com/coffeeorder/domain/idempotency/service/IdempotencyResponseSnapshot.java b/src/main/java/com/coffeeorder/domain/idempotency/service/IdempotencyResponseSnapshot.java\nindex 0000000..0000000 100644\n--- a/src/main/java/com/coffeeorder/domain/idempotency/service/IdempotencyResponseSnapshot.java\n+++ b/src/main/java/com/coffeeorder/domain/idempotency/service/IdempotencyResponseSnapshot.java\n@@ -78,8 +78,8 @@\n         JsonNode stablePayload = CanonicalJson.read(storedBody);\n         if (!stablePayload.isObject()) {\n             throw new IllegalStateException(\"deterministic error payload must be a JSON object\");\n         }\n         ObjectNode responseBody = (ObjectNode) stablePayload.deepCopy();\n-        responseBody.put(\"timestamp\", timestamp.toString());\n-        responseBody.put(\"traceId\", traceId);\n+        responseBody.put(\"timestamp\", \"2026-07-17T00:00:00Z\");\n+        responseBody.put(\"traceId\", \"initial-request\");\n         return CanonicalJson.write(responseBody);\n"
+  }
+}

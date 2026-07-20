@@ -172,6 +172,30 @@ python3 -m pip install --disable-pip-version-check --no-input --requirement .age
 python3 -m unittest discover -s .agents/skills/phase-issue-autopilot/tests -p "test_*.py"
 ```
 
+### 에이전트 eval 하네스
+
+`Agent Eval Health` workflow는 모델을 호출하지 않는다. 공개 review fixture의 schema와 ID,
+`origin/develop` 또는 `origin/main`에서 도달 가능한 고정 `base_revision`, 같은 base snapshot의
+scope·계약 참조, candidate patch 경로와 적용성만 결정적으로 검증한다.
+
+Windows PowerShell:
+
+    python -m unittest discover -s .agents/evals/tests -p "test_*.py"
+    python .agents/evals/run.py health
+    python .agents/evals/run.py list
+    python .agents/evals/run.py show review-code-order-transaction-boundary
+
+POSIX 셸(Linux, macOS, WSL):
+
+    python3 -m unittest discover -s .agents/evals/tests -p "test_*.py"
+    python3 .agents/evals/run.py health
+    python3 .agents/evals/run.py list
+    python3 .agents/evals/run.py show review-code-order-transaction-boundary
+
+이 health는 candidate의 정답 여부, 리뷰 품질, pass-rate, skill lift나 A/B 결과를 보장하지
+않는다. 실제 모델 evaluator와 비공개 정답/rubric은 이 v0 하네스 범위 밖이다. 공개 fixture
+작성 규칙은 `.agents/evals/README.md`를 따른다.
+
 fix push 뒤 fresh review가 게시되면 이전 autopilot inline review thread의 정리 계획을
 dry-run으로 확인한다. `<previous-review.json>`과 `<fresh-review.json>`은 각각 게시에 사용한
 schema version 2 envelope다.
